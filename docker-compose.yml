@@ -18,6 +18,9 @@ services:
       # ── Jellyfin ──
       - JELLYFIN_URL=http://jellyfin:8096
       - JELLYFIN_API_KEY=              # optional
+      # ── Prowlarr ──
+      - PROWLARR_URL=http://prowlarr:9696
+      - PROWLARR_API_KEY=your-prowlarr-api-key
     restart: unless-stopped
     # Put this on the same Docker network as your *arr stack:
     # networks:

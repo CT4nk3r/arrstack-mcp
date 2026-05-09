@@ -1,6 +1,6 @@
 # 🎬 arrstack-mcp
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants control over your **Sonarr**, **Radarr**, **qBittorrent**, and **Jellyfin** homelab media stack.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants control over your **Sonarr**, **Radarr**, **Prowlarr**, **qBittorrent**, and **Jellyfin** homelab media stack.
 
 Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, and any other MCP-compatible client.
 
@@ -10,6 +10,7 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 |---------|-------|
 | **Sonarr** | List series, search & add shows, upcoming episodes, download queue |
 | **Radarr** | List movies, search & add movies, download queue |
+| **Prowlarr** | List/test indexers, search releases, health check |
 | **qBittorrent** | List/pause/resume/delete torrents, add magnets, transfer stats |
 | **Jellyfin** | List libraries, recent additions, system info |
 
@@ -113,6 +114,8 @@ All configuration is done via environment variables:
 | `QBT_PASS` | If qBt | qBittorrent password |
 | `JELLYFIN_URL` | No | Jellyfin base URL (e.g. `http://localhost:8096`) |
 | `JELLYFIN_API_KEY` | No | Jellyfin API key (optional, for authenticated endpoints) |
+| `PROWLARR_URL` | No | Prowlarr base URL (e.g. `http://localhost:9696`) |
+| `PROWLARR_API_KEY` | If Prowlarr | Prowlarr API key (Settings → General) |
 
 ## Available Tools
 
@@ -136,6 +139,16 @@ All configuration is done via environment variables:
 | `radarr_search` | Search for new movies to add |
 | `radarr_add_movie` | Add a movie by TMDB ID |
 | `radarr_queue` | Show current download queue |
+
+### Prowlarr (Indexers)
+
+| Tool | Description |
+|------|-------------|
+| `prowlarr_list_indexers` | List all indexers with status |
+| `prowlarr_test_indexer` | Test a specific indexer connection |
+| `prowlarr_test_all_indexers` | Test all enabled indexers |
+| `prowlarr_search` | Search across indexers for releases |
+| `prowlarr_health` | Check system health warnings |
 
 ### qBittorrent (Downloads)
 
@@ -174,6 +187,7 @@ python server.py --transport sse --port 8000
 
 - **Sonarr**: Settings → General → API Key
 - **Radarr**: Settings → General → API Key
+- **Prowlarr**: Settings → General → API Key
 - **qBittorrent**: Settings → Web UI → Authentication
 - **Jellyfin**: Dashboard → API Keys → Add
 

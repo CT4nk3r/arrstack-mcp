@@ -11,7 +11,9 @@
         "QBT_URL": "http://localhost:8080",
         "QBT_USER": "admin",
         "QBT_PASS": "your-password",
-        "JELLYFIN_URL": "http://localhost:8096"
+        "JELLYFIN_URL": "http://localhost:8096",
+        "PROWLARR_URL": "http://localhost:9696",
+        "PROWLARR_API_KEY": "your-api-key"
       }
     }
   }

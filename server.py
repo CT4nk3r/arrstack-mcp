@@ -1,5 +1,5 @@
 """
-arrstack-mcp — MCP server for Sonarr, Radarr, qBittorrent & Jellyfin.
+arrstack-mcp — MCP server for Sonarr, Radarr, Prowlarr, qBittorrent & Jellyfin.
 
 Exposes your *arr media stack as MCP tools so any AI assistant
 (Claude Desktop, Cursor, VS Code Copilot, OpenClaw, etc.) can
@@ -24,6 +24,8 @@ RADARR_API_KEY = os.environ.get("RADARR_API_KEY", "")
 QBT_URL = os.environ.get("QBT_URL", "").rstrip("/")
 QBT_USER = os.environ.get("QBT_USER", "admin")
 QBT_PASS = os.environ.get("QBT_PASS", "")
+PROWLARR_URL = os.environ.get("PROWLARR_URL", "").rstrip("/")
+PROWLARR_API_KEY = os.environ.get("PROWLARR_API_KEY", "")
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
 JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
 
@@ -31,7 +33,7 @@ mcp = FastMCP(
     "arrstack",
     instructions=(
         "Homelab media stack tools for Sonarr (TV), Radarr (Movies), "
-        "qBittorrent (Downloads), and Jellyfin (Streaming). "
+        "Prowlarr (Indexers), qBittorrent (Downloads), and Jellyfin (Streaming). "
         "Use these tools to search, add, and manage media."
     ),
 )
@@ -100,6 +102,20 @@ def _jellyfin(path: str):
     if JELLYFIN_API_KEY:
         headers["X-Emby-Token"] = JELLYFIN_API_KEY
     r = httpx.get(f"{JELLYFIN_URL}{path}", headers=headers, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def _prowlarr(path: str, method: str = "GET", json=None):
+    if not PROWLARR_URL:
+        return "Prowlarr is not configured. Set PROWLARR_URL and PROWLARR_API_KEY."
+    r = httpx.request(
+        method,
+        f"{PROWLARR_URL}/api/v1{path}",
+        headers={"X-Api-Key": PROWLARR_API_KEY},
+        json=json,
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
 
@@ -343,6 +359,98 @@ def radarr_queue() -> str:
 
 
 # ════════════════════════════════════════════════════════════════
+#  Prowlarr Tools
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def prowlarr_list_indexers() -> str:
+    """List all configured indexers in Prowlarr with their status and priority."""
+    data = _prowlarr("/indexer")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for idx in data:
+        enabled = "✅" if idx.get("enable") else "❌"
+        name = idx.get("name", "?")
+        protocol = idx.get("protocol", "?")
+        priority = idx.get("priority", "?")
+        lines.append(f"{enabled} {name} ({protocol}) — priority: {priority}, id: {idx['id']}")
+    return "\n".join(lines) or "No indexers configured."
+
+
+@mcp.tool()
+def prowlarr_test_indexer(indexer_id: int) -> str:
+    """Test an indexer connection in Prowlarr. Use this to reset a failing indexer.
+
+    Args:
+        indexer_id: The indexer ID (use prowlarr_list_indexers to find it).
+    """
+    try:
+        _prowlarr(f"/indexer/{indexer_id}/test", method="POST")
+        return "✅ Indexer test passed."
+    except httpx.HTTPStatusError as e:
+        return f"❌ Indexer test failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def prowlarr_test_all_indexers() -> str:
+    """Test all enabled indexers in Prowlarr and report their status."""
+    data = _prowlarr("/indexer")
+    if isinstance(data, str):
+        return data
+    results = []
+    for idx in data:
+        if not idx.get("enable"):
+            continue
+        try:
+            _prowlarr(f"/indexer/{idx['id']}/test", method="POST")
+            results.append(f"✅ {idx['name']} — OK")
+        except httpx.HTTPStatusError as e:
+            results.append(f"❌ {idx['name']} — {e.response.status_code}")
+    return "\n".join(results) or "No enabled indexers."
+
+
+@mcp.tool()
+def prowlarr_search(query: str, indexer_ids: str = "") -> str:
+    """Search across Prowlarr indexers for releases.
+
+    Args:
+        query: Search term.
+        indexer_ids: Comma-separated indexer IDs to search (empty = all).
+    """
+    params = f"/search?query={query}&type=search"
+    if indexer_ids:
+        params += f"&indexerIds={indexer_ids}"
+    data = _prowlarr(params)
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data[:15]:
+        title = r.get("title", "?")
+        size_gb = r.get("size", 0) / 1e9
+        seeders = r.get("seeders", "?")
+        indexer = r.get("indexer", "?")
+        lines.append(f"• {title} — {size_gb:.1f} GB, {seeders} seeds [{indexer}]")
+    return "\n".join(lines) or "No results."
+
+
+@mcp.tool()
+def prowlarr_health() -> str:
+    """Check Prowlarr system health for warnings and errors."""
+    data = _prowlarr("/health")
+    if isinstance(data, str):
+        return data
+    if not data:
+        return "✅ No health issues."
+    lines = []
+    for h in data:
+        icon = "⚠️" if h.get("type") == "warning" else "❌"
+        lines.append(f"{icon} {h.get('message', '?')}")
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
 #  qBittorrent Tools
 # ════════════════════════════════════════════════════════════════
 
@@ -543,6 +651,8 @@ def main():
         enabled.append("Sonarr")
     if RADARR_URL:
         enabled.append("Radarr")
+    if PROWLARR_URL:
+        enabled.append("Prowlarr")
     if QBT_URL:
         enabled.append("qBittorrent")
     if JELLYFIN_URL:
