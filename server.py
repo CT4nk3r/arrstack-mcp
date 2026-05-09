@@ -243,8 +243,113 @@ def sonarr_upcoming(days: int = 7) -> str:
 
 
 @mcp.tool()
+def sonarr_list_quality_profiles() -> str:
+    """List all quality profiles in Sonarr with their allowed qualities."""
+    data = _sonarr("/qualityprofile")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for p in data:
+        qualities = [
+            q.get("quality", q).get("name", "?")
+            for q in p.get("items", [])
+            if q.get("allowed")
+        ]
+        lines.append(
+            f"• [{p['id']}] {p['name']} — "
+            f"Cutoff: {p.get('cutoff', {}).get('name', '?') if isinstance(p.get('cutoff'), dict) else p.get('cutoffFormatScore', '?')}\n"
+            f"  Allowed: {', '.join(qualities) or 'none'}"
+        )
+    return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def sonarr_get_quality_definitions() -> str:
+    """Get quality size limits (min/max MB per minute) for each quality tier in Sonarr.
+    These limits control what file sizes Sonarr will accept for downloads."""
+    data = _sonarr("/qualitydefinition")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for d in data:
+        name = d.get("quality", {}).get("name", "?")
+        qid = d.get("quality", {}).get("id", "?")
+        min_size = d.get("minSize", 0)
+        max_size = d.get("maxSize", 0)
+        pref_size = d.get("preferredSize", 0)
+        max_str = f"{max_size:.1f}" if max_size else "unlimited"
+        pref_str = f"{pref_size:.1f}" if pref_size else "unlimited"
+        lines.append(
+            f"• [{qid}] {name} — "
+            f"min: {min_size:.1f}, preferred: {pref_str}, max: {max_str} MB/min"
+        )
+    return "\n".join(lines) or "No quality definitions found."
+
+
+@mcp.tool()
+def sonarr_set_quality_definition(
+    quality_id: int, min_size: float = -1, preferred_size: float = -1, max_size: float = -1
+) -> str:
+    """Set the min/preferred/max file size (in MB per minute of runtime) for a Sonarr quality tier.
+
+    Use sonarr_get_quality_definitions to see current values and quality IDs.
+    For a ~45min episode, 5 MB/min ≈ 225 MB, 10 MB/min ≈ 450 MB.
+    Set to 0 for unlimited (max/preferred only). Pass -1 to leave unchanged.
+
+    Args:
+        quality_id: Quality ID from sonarr_get_quality_definitions.
+        min_size: Minimum MB per minute (-1 to keep current).
+        preferred_size: Preferred MB per minute (-1 to keep current, 0 for unlimited).
+        max_size: Maximum MB per minute (-1 to keep current, 0 for unlimited).
+    """
+    defs = _sonarr("/qualitydefinition")
+    if isinstance(defs, str):
+        return defs
+    target = None
+    for d in defs:
+        if d.get("quality", {}).get("id") == quality_id:
+            target = d
+            break
+    if not target:
+        return f"Quality ID {quality_id} not found. Use sonarr_get_quality_definitions to list IDs."
+    if min_size >= 0:
+        target["minSize"] = min_size
+    if preferred_size >= 0:
+        target["preferredSize"] = preferred_size
+    if max_size >= 0:
+        target["maxSize"] = max_size
+    result = _sonarr(f"/qualitydefinition/{target['id']}", method="PUT", json=target)
+    if isinstance(result, dict):
+        name = result.get("quality", {}).get("name", "?")
+        return (
+            f"✅ Updated {name}: min={result.get('minSize', 0):.1f}, "
+            f"preferred={result.get('preferredSize', 0):.1f}, "
+            f"max={result.get('maxSize', 0):.1f} MB/min"
+        )
+    return str(result)
+
+
+@mcp.tool()
+def sonarr_list_custom_formats() -> str:
+    """List all custom formats in Sonarr with their specifications."""
+    data = _sonarr("/customformat")
+    if isinstance(data, str):
+        return data
+    if not data:
+        return "No custom formats configured."
+    lines = []
+    for cf in data:
+        specs = [s.get("name", "?") for s in cf.get("specifications", [])]
+        lines.append(
+            f"• [{cf['id']}] {cf['name']}\n"
+            f"  Specs: {', '.join(specs) or 'none'}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def sonarr_queue() -> str:
-    """Show the current Sonarr download queue with status for each item."""
+    """Show the current Sonarr download queue with status and queue IDs for each item."""
     data = _sonarr("/queue?pageSize=50&includeUnknownSeriesItems=true")
     if isinstance(data, str):
         return data
@@ -254,8 +359,66 @@ def sonarr_queue() -> str:
         title = r.get("title", "?")
         status = r.get("status", "?")
         sizeleft = r.get("sizeleft", 0) / 1e9
-        lines.append(f"• {title} — {status} ({sizeleft:.1f} GB remaining)")
+        lines.append(f"• [queueId: {r['id']}] {title} — {status} ({sizeleft:.1f} GB remaining)")
     return "\n".join(lines) or "Queue is empty."
+
+
+@mcp.tool()
+def sonarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
+    """Remove an item from the Sonarr download queue.
+
+    Args:
+        queue_id: Queue item ID (use sonarr_queue to find it).
+        blocklist: If True, adds the release to the blocklist so it won't be grabbed again.
+    """
+    try:
+        r = httpx.delete(
+            f"{SONARR_URL}/api/v3/queue/{queue_id}",
+            headers={"X-Api-Key": SONARR_API_KEY},
+            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def sonarr_delete_episode_file(episode_file_id: int) -> str:
+    """Delete a downloaded episode file, marking it as missing in Sonarr.
+    This allows Sonarr to re-search and download a new version.
+
+    Args:
+        episode_file_id: Episode file ID (use sonarr_get_series to find file IDs).
+    """
+    try:
+        r = httpx.delete(
+            f"{SONARR_URL}/api/v3/episodefile/{episode_file_id}",
+            headers={"X-Api-Key": SONARR_API_KEY},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def sonarr_search_missing(series_id: int = 0) -> str:
+    """Trigger a search for missing episodes in Sonarr.
+
+    Args:
+        series_id: Sonarr series ID to search. Set to 0 to search ALL series with missing episodes.
+    """
+    if series_id:
+        result = _sonarr("/command", method="POST", json={"name": "SeriesSearch", "seriesId": series_id})
+    else:
+        result = _sonarr("/command", method="POST", json={"name": "MissingEpisodeSearch"})
+    if isinstance(result, dict):
+        scope = f"series {series_id}" if series_id else "all missing episodes"
+        return f"🔍 Search triggered for {scope}."
+    return str(result)
 
 
 # ════════════════════════════════════════════════════════════════
