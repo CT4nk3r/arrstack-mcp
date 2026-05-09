@@ -970,6 +970,26 @@ def jellyfin_system_info() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def jellyfin_scan_library() -> str:
+    """Trigger a library scan in Jellyfin to detect new, changed, or removed media files.
+    Requires JELLYFIN_API_KEY to be set."""
+    if not JELLYFIN_URL:
+        return "Jellyfin is not configured. Set JELLYFIN_URL."
+    if not JELLYFIN_API_KEY:
+        return "JELLYFIN_API_KEY is required for library scans. Set it in the environment."
+    try:
+        r = httpx.post(
+            f"{JELLYFIN_URL}/Library/Refresh",
+            headers={"X-Emby-Token": JELLYFIN_API_KEY},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return "✅ Library scan triggered."
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
 # ── Entrypoint ──
 
 def main():
