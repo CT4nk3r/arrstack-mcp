@@ -7,4 +7,4 @@ COPY server.py .
 
 EXPOSE 8000
 ENTRYPOINT ["python", "server.py"]
-CMD ["--transport", "streamable-http"]
+CMD ["--transport", "sse"]
