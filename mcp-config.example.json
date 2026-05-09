@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "arrstack": {
+      "command": "python",
+      "args": ["server.py"],
+      "env": {
+        "SONARR_URL": "http://localhost:8989",
+        "SONARR_API_KEY": "your-api-key",
+        "RADARR_URL": "http://localhost:7878",
+        "RADARR_API_KEY": "your-api-key",
+        "QBT_URL": "http://localhost:8080",
+        "QBT_USER": "admin",
+        "QBT_PASS": "your-password",
+        "JELLYFIN_URL": "http://localhost:8096"
+      }
+    }
+  }
+}

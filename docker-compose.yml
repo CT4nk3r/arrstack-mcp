@@ -1,0 +1,24 @@
+services:
+  arrstack-mcp:
+    build: .
+    container_name: arrstack-mcp
+    ports:
+      - "8000:8000"
+    environment:
+      # ── Sonarr ──
+      - SONARR_URL=http://sonarr:8989
+      - SONARR_API_KEY=your-sonarr-api-key
+      # ── Radarr ──
+      - RADARR_URL=http://radarr:7878
+      - RADARR_API_KEY=your-radarr-api-key
+      # ── qBittorrent ──
+      - QBT_URL=http://qbittorrent:8080
+      - QBT_USER=admin
+      - QBT_PASS=your-qbittorrent-password
+      # ── Jellyfin ──
+      - JELLYFIN_URL=http://jellyfin:8096
+      - JELLYFIN_API_KEY=              # optional
+    restart: unless-stopped
+    # Put this on the same Docker network as your *arr stack:
+    # networks:
+    #   - your-network
