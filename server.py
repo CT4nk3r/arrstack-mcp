@@ -12,6 +12,7 @@ import argparse
 import logging
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 logger = logging.getLogger("arrstack-mcp")
 
@@ -36,6 +37,7 @@ mcp = FastMCP(
         "Prowlarr (Indexers), qBittorrent (Downloads), and Jellyfin (Streaming). "
         "Use these tools to search, add, and manage media."
     ),
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 # ── HTTP helpers ──
