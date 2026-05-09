@@ -8,6 +8,8 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 ![OpenClaw using arrstack-mcp to search and download media](screenshots/DemoDownloadScreenshot.png)
 
+![Adding a movie with natural language](screenshots/DemoAddMovieScreenshot.png)
+
 ## Features
 
 | Service | Tools |
