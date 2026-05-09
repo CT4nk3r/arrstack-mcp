@@ -508,8 +508,113 @@ def radarr_add_movie(tmdb_id: int, quality_profile_id: int = 1) -> str:
 
 
 @mcp.tool()
+def radarr_list_quality_profiles() -> str:
+    """List all quality profiles in Radarr with their allowed qualities."""
+    data = _radarr("/qualityprofile")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for p in data:
+        qualities = [
+            q.get("quality", q).get("name", "?")
+            for q in p.get("items", [])
+            if q.get("allowed")
+        ]
+        lines.append(
+            f"• [{p['id']}] {p['name']} — "
+            f"Cutoff: {p.get('cutoff', {}).get('name', '?') if isinstance(p.get('cutoff'), dict) else p.get('cutoffFormatScore', '?')}\n"
+            f"  Allowed: {', '.join(qualities) or 'none'}"
+        )
+    return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def radarr_get_quality_definitions() -> str:
+    """Get quality size limits (min/max MB per minute) for each quality tier in Radarr.
+    These limits control what file sizes Radarr will accept for downloads."""
+    data = _radarr("/qualitydefinition")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for d in data:
+        name = d.get("quality", {}).get("name", "?")
+        qid = d.get("quality", {}).get("id", "?")
+        min_size = d.get("minSize", 0)
+        max_size = d.get("maxSize", 0)
+        pref_size = d.get("preferredSize", 0)
+        max_str = f"{max_size:.1f}" if max_size else "unlimited"
+        pref_str = f"{pref_size:.1f}" if pref_size else "unlimited"
+        lines.append(
+            f"• [{qid}] {name} — "
+            f"min: {min_size:.1f}, preferred: {pref_str}, max: {max_str} MB/min"
+        )
+    return "\n".join(lines) or "No quality definitions found."
+
+
+@mcp.tool()
+def radarr_set_quality_definition(
+    quality_id: int, min_size: float = -1, preferred_size: float = -1, max_size: float = -1
+) -> str:
+    """Set the min/preferred/max file size (in MB per minute of runtime) for a Radarr quality tier.
+
+    Use radarr_get_quality_definitions to see current values and quality IDs.
+    For a ~2hr movie, 40 MB/min ≈ 5 GB, 85 MB/min ≈ 10 GB.
+    Set to 0 for unlimited (max/preferred only). Pass -1 to leave unchanged.
+
+    Args:
+        quality_id: Quality ID from radarr_get_quality_definitions.
+        min_size: Minimum MB per minute (-1 to keep current).
+        preferred_size: Preferred MB per minute (-1 to keep current, 0 for unlimited).
+        max_size: Maximum MB per minute (-1 to keep current, 0 for unlimited).
+    """
+    defs = _radarr("/qualitydefinition")
+    if isinstance(defs, str):
+        return defs
+    target = None
+    for d in defs:
+        if d.get("quality", {}).get("id") == quality_id:
+            target = d
+            break
+    if not target:
+        return f"Quality ID {quality_id} not found. Use radarr_get_quality_definitions to list IDs."
+    if min_size >= 0:
+        target["minSize"] = min_size
+    if preferred_size >= 0:
+        target["preferredSize"] = preferred_size
+    if max_size >= 0:
+        target["maxSize"] = max_size
+    result = _radarr(f"/qualitydefinition/{target['id']}", method="PUT", json=target)
+    if isinstance(result, dict):
+        name = result.get("quality", {}).get("name", "?")
+        return (
+            f"✅ Updated {name}: min={result.get('minSize', 0):.1f}, "
+            f"preferred={result.get('preferredSize', 0):.1f}, "
+            f"max={result.get('maxSize', 0):.1f} MB/min"
+        )
+    return str(result)
+
+
+@mcp.tool()
+def radarr_list_custom_formats() -> str:
+    """List all custom formats in Radarr with their specifications."""
+    data = _radarr("/customformat")
+    if isinstance(data, str):
+        return data
+    if not data:
+        return "No custom formats configured."
+    lines = []
+    for cf in data:
+        specs = [s.get("name", "?") for s in cf.get("specifications", [])]
+        lines.append(
+            f"• [{cf['id']}] {cf['name']}\n"
+            f"  Specs: {', '.join(specs) or 'none'}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def radarr_queue() -> str:
-    """Show the current Radarr download queue with status for each item."""
+    """Show the current Radarr download queue with status and queue IDs for each item."""
     data = _radarr("/queue?pageSize=50&includeUnknownMovieItems=true")
     if isinstance(data, str):
         return data
@@ -519,8 +624,78 @@ def radarr_queue() -> str:
         title = r.get("title", "?")
         status = r.get("status", "?")
         sizeleft = r.get("sizeleft", 0) / 1e9
-        lines.append(f"• {title} — {status} ({sizeleft:.1f} GB remaining)")
+        lines.append(f"• [queueId: {r['id']}] {title} — {status} ({sizeleft:.1f} GB remaining)")
     return "\n".join(lines) or "Queue is empty."
+
+
+@mcp.tool()
+def radarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
+    """Remove an item from the Radarr download queue.
+
+    Args:
+        queue_id: Queue item ID (use radarr_queue to find it).
+        blocklist: If True, adds the release to the blocklist so it won't be grabbed again.
+    """
+    try:
+        r = httpx.delete(
+            f"{RADARR_URL}/api/v3/queue/{queue_id}",
+            headers={"X-Api-Key": RADARR_API_KEY},
+            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def radarr_delete_movie_file(movie_id: int) -> str:
+    """Delete the downloaded file for a movie, marking it as missing in Radarr.
+    This allows Radarr to re-search and download a new version.
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+    """
+    movie = _radarr(f"/movie/{movie_id}")
+    if isinstance(movie, str):
+        return movie
+    movie_file = movie.get("movieFile")
+    if not movie_file:
+        return f"Movie '{movie.get('title', '?')}' has no file to delete."
+    fid = movie_file.get("id")
+    try:
+        r = httpx.delete(
+            f"{RADARR_URL}/api/v3/moviefile/{fid}",
+            headers={"X-Api-Key": RADARR_API_KEY},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return f"✅ Deleted file for '{movie['title']}' (file id: {fid}). Movie is now marked as missing."
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def radarr_search_missing(movie_ids: str = "") -> str:
+    """Trigger a search for missing movies in Radarr.
+
+    Args:
+        movie_ids: Comma-separated Radarr movie IDs to search. Leave empty to search ALL missing movies.
+    """
+    if movie_ids:
+        ids = [int(x.strip()) for x in movie_ids.split(",")]
+    else:
+        movies = _radarr("/movie")
+        if isinstance(movies, str):
+            return movies
+        ids = [m["id"] for m in movies if not m.get("hasFile")]
+        if not ids:
+            return "All movies have files — nothing to search."
+    result = _radarr("/command", method="POST", json={"name": "MoviesSearch", "movieIds": ids})
+    if isinstance(result, dict):
+        return f"🔍 Search triggered for {len(ids)} movie(s)."
+    return str(result)
 
 
 # ════════════════════════════════════════════════════════════════
