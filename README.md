@@ -4,6 +4,10 @@ An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants contr
 
 Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, and any other MCP-compatible client.
 
+## Demo
+
+![OpenClaw using arrstack-mcp to search and download media](screenshots/DemoDownloadScreenshot.png)
+
 ## Features
 
 | Service | Tools |
