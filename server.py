@@ -818,7 +818,8 @@ def qbt_list_torrents(filter: str = "all") -> str:
             speed += f" ↓{dl:.1f} MB/s"
         if up > 0.01:
             speed += f" ↑{up:.1f} MB/s"
-        lines.append(f"• {name} — {progress:.0f}% [{state}] {size_gb:.1f} GB{speed}")
+        h = t.get("hash", "?")
+        lines.append(f"• [{h}] {name} — {progress:.0f}% [{state}] {size_gb:.1f} GB{speed}")
     return "\n".join(lines) or "No torrents."
 
 
