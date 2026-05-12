@@ -35,7 +35,22 @@ mcp = FastMCP(
     instructions=(
         "Homelab media stack tools for Sonarr (TV), Radarr (Movies), "
         "Prowlarr (Indexers), qBittorrent (Downloads), and Jellyfin (Streaming). "
-        "Use these tools to search, add, and manage media."
+        "Use these tools to search, add, and manage media.\n\n"
+        "## Hungarian (HuN) / nCore workflow\n"
+        "nCore is a Hungarian private tracker with dual-audio (HuN) releases. "
+        "When the user wants Hungarian releases:\n"
+        "1. Make sure movies/series are on the correct Hungarian quality profile "
+        "(use radarr_list_movies / sonarr_list_series — they show profile names and IDs).\n"
+        "2. IMPORTANT: Dual-audio releases are 2–3× larger than English-only at the same "
+        "quality tier because they carry two full audio tracks. The default 1080p max size "
+        "(~83 MB/min) is too low — raise Bluray-1080p, Remux-1080p, WEBDL-1080p, "
+        "WEBRip-1080p, and HDTV-1080p max to at least 400 MB/min with "
+        "radarr_set_quality_definition / sonarr_set_quality_definition.\n"
+        "3. After triggering a search, always check the queue to verify releases contain "
+        "'HuN' or 'HUN' in the filename. If Radarr/Sonarr grabbed an English-only release, "
+        "delete it from the queue (blocklist=true) and re-search.\n"
+        "4. If existing files need replacing (e.g. English → HuN), delete the movie file "
+        "with radarr_delete_movie_file / sonarr_delete_episode_file first, then search.\n"
     ),
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
@@ -133,6 +148,12 @@ def sonarr_list_series() -> str:
     data = _sonarr("/series")
     if isinstance(data, str):
         return data
+    profiles = {}
+    try:
+        for p in _sonarr("/qualityprofile"):
+            profiles[p["id"]] = p["name"]
+    except Exception:
+        pass
     lines = []
     for s in sorted(data, key=lambda x: x["title"]):
         stats = s.get("statistics", {})
@@ -140,9 +161,10 @@ def sonarr_list_series() -> str:
         total = stats.get("episodeCount", 0)
         size_gb = stats.get("sizeOnDisk", 0) / 1e9
         icon = "✅" if s.get("monitored") else "⏸️"
+        profile_name = profiles.get(s.get("qualityProfileId"), "?")
         lines.append(
-            f"{icon} {s['title']} ({s.get('year', '?')}) — "
-            f"{have}/{total} episodes, {size_gb:.1f} GB"
+            f"{icon} [id:{s['id']}] {s['title']} ({s.get('year', '?')}) — "
+            f"{have}/{total} episodes, {size_gb:.1f} GB [profile: {profile_name}]"
         )
     return "\n".join(lines) or "No series found."
 
@@ -154,10 +176,20 @@ def sonarr_get_series(series_id: int) -> str:
     if isinstance(s, str):
         return s
     stats = s.get("statistics", {})
+    profile_name = "?"
+    try:
+        for p in _sonarr("/qualityprofile"):
+            if p["id"] == s.get("qualityProfileId"):
+                profile_name = p["name"]
+                break
+    except Exception:
+        pass
     lines = [
         f"Title: {s['title']} ({s.get('year', '?')})",
+        f"Sonarr ID: {s['id']}",
         f"Status: {s.get('status', '?')}",
         f"Network: {s.get('network', '?')}",
+        f"Quality Profile: [{s.get('qualityProfileId', '?')}] {profile_name}",
         f"Monitored: {s.get('monitored', False)}",
         f"Seasons: {stats.get('seasonCount', '?')}",
         f"Episodes: {stats.get('episodeFileCount', 0)}/{stats.get('episodeCount', 0)}",
@@ -421,6 +453,36 @@ def sonarr_search_missing(series_id: int = 0) -> str:
     return str(result)
 
 
+@mcp.tool()
+def sonarr_update_series(series_id: int, quality_profile_id: int = -1, monitored: int = -1) -> str:
+    """Update settings for a series in Sonarr (quality profile, monitored status, etc.).
+
+    Args:
+        series_id: Sonarr series ID (use sonarr_list_series or sonarr_get_series to find it).
+        quality_profile_id: New quality profile ID (-1 to keep current).
+        monitored: Set to 1 to monitor, 0 to unmonitor (-1 to keep current).
+    """
+    series = _sonarr(f"/series/{series_id}")
+    if isinstance(series, str):
+        return series
+    changes = []
+    if quality_profile_id >= 0:
+        series["qualityProfileId"] = quality_profile_id
+        changes.append(f"qualityProfile → {quality_profile_id}")
+    if monitored >= 0:
+        series["monitored"] = bool(monitored)
+        changes.append(f"monitored → {bool(monitored)}")
+    if not changes:
+        return "No changes specified."
+    try:
+        result = _sonarr(f"/series/{series_id}", method="PUT", json=series)
+        if isinstance(result, dict):
+            return f"✅ Updated '{result['title']}': {', '.join(changes)}"
+        return str(result)
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
 # ════════════════════════════════════════════════════════════════
 #  Radarr Tools
 # ════════════════════════════════════════════════════════════════
@@ -432,13 +494,21 @@ def radarr_list_movies() -> str:
     data = _radarr("/movie")
     if isinstance(data, str):
         return data
+    profiles = {}
+    try:
+        for p in _radarr("/qualityprofile"):
+            profiles[p["id"]] = p["name"]
+    except Exception:
+        pass
     lines = []
     for m in sorted(data, key=lambda x: x["title"]):
         has_file = "✅" if m.get("hasFile") else "❌"
         monitored = "👁" if m.get("monitored") else "⏸️"
         size_gb = m.get("sizeOnDisk", 0) / 1e9
+        profile_name = profiles.get(m.get("qualityProfileId"), "?")
         lines.append(
-            f"{has_file}{monitored} {m['title']} ({m.get('year', '?')}) — {size_gb:.1f} GB"
+            f"{has_file}{monitored} [id:{m['id']}] {m['title']} ({m.get('year', '?')}) — "
+            f"{size_gb:.1f} GB [profile: {profile_name}]"
         )
     return "\n".join(lines) or "No movies found."
 
@@ -449,10 +519,20 @@ def radarr_get_movie(movie_id: int) -> str:
     m = _radarr(f"/movie/{movie_id}")
     if isinstance(m, str):
         return m
+    profile_name = "?"
+    try:
+        for p in _radarr("/qualityprofile"):
+            if p["id"] == m.get("qualityProfileId"):
+                profile_name = p["name"]
+                break
+    except Exception:
+        pass
     lines = [
         f"Title: {m['title']} ({m.get('year', '?')})",
+        f"Radarr ID: {m['id']}",
         f"Status: {m.get('status', '?')}",
         f"Studio: {m.get('studio', '?')}",
+        f"Quality Profile: [{m.get('qualityProfileId', '?')}] {profile_name}",
         f"Has File: {m.get('hasFile', False)}",
         f"Monitored: {m.get('monitored', False)}",
         f"Size: {m.get('sizeOnDisk', 0) / 1e9:.1f} GB",
@@ -672,6 +752,36 @@ def radarr_delete_movie_file(movie_id: int) -> str:
         )
         r.raise_for_status()
         return f"✅ Deleted file for '{movie['title']}' (file id: {fid}). Movie is now marked as missing."
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def radarr_update_movie(movie_id: int, quality_profile_id: int = -1, monitored: int = -1) -> str:
+    """Update settings for a movie in Radarr (quality profile, monitored status, etc.).
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+        quality_profile_id: New quality profile ID (-1 to keep current).
+        monitored: Set to 1 to monitor, 0 to unmonitor (-1 to keep current).
+    """
+    movie = _radarr(f"/movie/{movie_id}")
+    if isinstance(movie, str):
+        return movie
+    changes = []
+    if quality_profile_id >= 0:
+        movie["qualityProfileId"] = quality_profile_id
+        changes.append(f"qualityProfile → {quality_profile_id}")
+    if monitored >= 0:
+        movie["monitored"] = bool(monitored)
+        changes.append(f"monitored → {bool(monitored)}")
+    if not changes:
+        return "No changes specified."
+    try:
+        result = _radarr(f"/movie/{movie_id}", method="PUT", json=movie)
+        if isinstance(result, dict):
+            return f"✅ Updated '{result['title']}': {', '.join(changes)}"
+        return str(result)
     except httpx.HTTPStatusError as e:
         return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
 
