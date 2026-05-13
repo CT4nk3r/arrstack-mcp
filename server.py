@@ -861,28 +861,99 @@ def prowlarr_test_all_indexers() -> str:
     return "\n".join(results) or "No enabled indexers."
 
 
+_prowlarr_search_cache: list = []
+
+
 @mcp.tool()
 def prowlarr_search(query: str, indexer_ids: str = "") -> str:
     """Search across Prowlarr indexers for releases.
+
+    Returns numbered results with guid for use with prowlarr_grab.
 
     Args:
         query: Search term.
         indexer_ids: Comma-separated indexer IDs to search (empty = all).
     """
+    global _prowlarr_search_cache
     params = f"/search?query={query}&type=search"
     if indexer_ids:
         params += f"&indexerIds={indexer_ids}"
     data = _prowlarr(params)
     if isinstance(data, str):
         return data
+    _prowlarr_search_cache = data[:25]
     lines = []
-    for r in data[:15]:
+    for i, r in enumerate(data[:25]):
         title = r.get("title", "?")
         size_gb = r.get("size", 0) / 1e9
         seeders = r.get("seeders", "?")
         indexer = r.get("indexer", "?")
-        lines.append(f"• {title} — {size_gb:.1f} GB, {seeders} seeds [{indexer}]")
+        lines.append(
+            f"[{i}] {title} — {size_gb:.1f} GB, {seeders} seeds [{indexer}]"
+        )
     return "\n".join(lines) or "No results."
+
+
+@mcp.tool()
+def prowlarr_grab(index: int) -> str:
+    """Grab a release from the most recent prowlarr_search results and send it to the download client (qBittorrent).
+
+    Run prowlarr_search first, then use the [index] number from those results here.
+
+    Args:
+        index: The result number from prowlarr_search (e.g. 0 for the first result).
+    """
+    global _prowlarr_search_cache
+    if not _prowlarr_search_cache:
+        return "❌ No cached search results. Run prowlarr_search first."
+    if index < 0 or index >= len(_prowlarr_search_cache):
+        return f"❌ Invalid index {index}. Valid range: 0–{len(_prowlarr_search_cache) - 1}."
+
+    release = _prowlarr_search_cache[index]
+    title = release.get("title", "?")
+    indexer_id = release.get("indexerId")
+    guid = release.get("guid", "")
+
+    # Use Prowlarr's download proxy URL if available, fall back to magnetUrl then guid
+    download_url = release.get("downloadUrl") or release.get("magnetUrl") or guid
+    if not download_url:
+        return f"❌ No download URL found for [{index}] {title}."
+
+    # If it's a magnet link, send straight to qBittorrent
+    if download_url.startswith("magnet:"):
+        try:
+            result = _qbt("/torrents/add", method="POST", data={"urls": download_url})
+            return f"✅ Sent magnet to qBittorrent: {title}"
+        except Exception as e:
+            return f"❌ Failed to add magnet to qBittorrent: {e}"
+
+    # For .torrent download URLs (nCore, etc.), download via Prowlarr proxy then send to qBittorrent
+    try:
+        r = httpx.get(download_url, timeout=30, follow_redirects=True)
+        r.raise_for_status()
+        # Upload torrent file to qBittorrent
+        global _qbt_sid
+        if not QBT_URL:
+            return "qBittorrent is not configured."
+        if not _qbt_sid:
+            login = httpx.post(
+                f"{QBT_URL}/api/v2/auth/login",
+                data={"username": QBT_USER, "password": QBT_PASS},
+                timeout=10,
+            )
+            _qbt_sid = login.cookies.get("SID")
+        upload = httpx.post(
+            f"{QBT_URL}/api/v2/torrents/add",
+            cookies={"SID": _qbt_sid},
+            files={"torrents": (f"{title}.torrent", r.content, "application/x-bittorrent")},
+            timeout=15,
+        )
+        if upload.status_code == 403:
+            _qbt_sid = None
+            return prowlarr_grab(index)
+        return f"✅ Downloaded and sent to qBittorrent: {title}"
+    except Exception as e:
+        return f"❌ Failed to grab release: {e}"
 
 
 @mcp.tool()
@@ -977,7 +1048,7 @@ def qbt_pause(torrent_hash: str) -> str:
     Args:
         torrent_hash: Hash of the torrent, or "all" to pause all.
     """
-    _qbt("/torrents/pause", method="POST", data={"hashes": torrent_hash})
+    _qbt("/torrents/stop", method="POST", data={"hashes": torrent_hash})
     return "⏸️ Paused."
 
 
@@ -988,7 +1059,7 @@ def qbt_resume(torrent_hash: str) -> str:
     Args:
         torrent_hash: Hash of the torrent, or "all" to resume all.
     """
-    _qbt("/torrents/resume", method="POST", data={"hashes": torrent_hash})
+    _qbt("/torrents/start", method="POST", data={"hashes": torrent_hash})
     return "▶️ Resumed."
 
 
