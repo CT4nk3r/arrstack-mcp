@@ -4,13 +4,19 @@
       "command": "python",
       "args": ["server.py"],
       "env": {
+        "ENABLED_SERVICES": "auto",
         "SONARR_URL": "http://localhost:8989",
         "SONARR_API_KEY": "your-api-key",
         "RADARR_URL": "http://localhost:7878",
         "RADARR_API_KEY": "your-api-key",
+        "LIDARR_URL": "http://localhost:8686",
+        "LIDARR_API_KEY": "your-api-key",
         "QBT_URL": "http://localhost:8080",
         "QBT_USER": "admin",
         "QBT_PASS": "your-password",
+        "RDT_URL": "http://localhost:6500",
+        "RDT_USER": "admin",
+        "RDT_PASS": "your-rdtclient-password",
         "JELLYFIN_URL": "http://localhost:8096",
         "PROWLARR_URL": "http://localhost:9696",
         "PROWLARR_API_KEY": "your-api-key",
@@ -19,7 +25,11 @@
         "GAMEVAULT_URL": "http://localhost:8082",
         "GAMEVAULT_API_KEY": "your-api-key",
         "MCP_ALLOWED_HOSTS": "localhost:*,127.0.0.1:*",
-        "LOG_LEVEL": "INFO"
+        "LOG_LEVEL": "INFO",
+        "SAB_URL": "http://localhost:8080",
+        "SAB_API_KEY": "your-api-key",
+        "BOOKSHELF_URL": "http://localhost:8787",
+        "BOOKSHELF_API_KEY": "your-api-key"
       }
     }
   }
