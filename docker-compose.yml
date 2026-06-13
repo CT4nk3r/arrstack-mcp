@@ -5,16 +5,24 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - ENABLED_SERVICES=auto
       # ── Sonarr ──
       - SONARR_URL=http://sonarr:8989
       - SONARR_API_KEY=your-sonarr-api-key
       # ── Radarr ──
       - RADARR_URL=http://radarr:7878
       - RADARR_API_KEY=your-radarr-api-key
+      # ── Lidarr ──
+      - LIDARR_URL=http://lidarr:8686
+      - LIDARR_API_KEY=your-lidarr-api-key
       # ── qBittorrent ──
       - QBT_URL=http://qbittorrent:8080
       - QBT_USER=admin
       - QBT_PASS=your-qbittorrent-password
+      # ── RDTClient (Real-Debrid downloader, qBT-compatible API) ──
+      - RDT_URL=http://rdtclient:6500
+      - RDT_USER=admin
+      - RDT_PASS=your-rdtclient-password
       # ── Jellyfin ──
       - JELLYFIN_URL=http://jellyfin:8096
       - JELLYFIN_API_KEY=              # optional
@@ -30,6 +38,12 @@ services:
       # ── MCP Server Security ──
       - MCP_ALLOWED_HOSTS=localhost:*,127.0.0.1:*,arrstack-mcp:*
       - LOG_LEVEL=INFO
+      # ── SABnzbd ──
+      - SAB_URL=http://sabnzbd:8080
+      - SAB_API_KEY=your-sabnzbd-api-key
+      # ── Bookshelf (Hardcover-flavored Readarr fork) ──
+      - BOOKSHELF_URL=http://bookshelf:8787
+      - BOOKSHELF_API_KEY=your-bookshelf-api-key
     restart: unless-stopped
     # Put this on the same Docker network as your *arr stack:
     # networks:

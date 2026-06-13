@@ -1,6 +1,5 @@
 """
-arrstack-mcp — MCP server for Sonarr, Radarr, Prowlarr, qBittorrent, Jellyfin,
-RomM, and GameVault.
+arrstack-mcp — configurable MCP server for homelab media and game services.
 
 Exposes your *arr media stack as MCP tools so any AI assistant
 (Claude Desktop, Cursor, VS Code Copilot, OpenClaw, etc.) can
@@ -28,9 +27,14 @@ SONARR_URL = os.environ.get("SONARR_URL", "").rstrip("/")
 SONARR_API_KEY = os.environ.get("SONARR_API_KEY", "")
 RADARR_URL = os.environ.get("RADARR_URL", "").rstrip("/")
 RADARR_API_KEY = os.environ.get("RADARR_API_KEY", "")
+LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
+LIDARR_API_KEY = os.environ.get("LIDARR_API_KEY", "")
 QBT_URL = os.environ.get("QBT_URL", "").rstrip("/")
 QBT_USER = os.environ.get("QBT_USER", "admin")
 QBT_PASS = os.environ.get("QBT_PASS", "")
+RDT_URL = os.environ.get("RDT_URL", "").rstrip("/")
+RDT_USER = os.environ.get("RDT_USER", "admin")
+RDT_PASS = os.environ.get("RDT_PASS", "")
 PROWLARR_URL = os.environ.get("PROWLARR_URL", "").rstrip("/")
 PROWLARR_API_KEY = os.environ.get("PROWLARR_API_KEY", "")
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
@@ -48,12 +52,37 @@ MCP_ALLOWED_HOSTS = [
     ).split(",")
     if host.strip()
 ]
+SAB_URL = os.environ.get("SAB_URL", "").rstrip("/")
+SAB_API_KEY = os.environ.get("SAB_API_KEY", "")
+BOOKSHELF_URL = os.environ.get("BOOKSHELF_URL", "").rstrip("/")
+BOOKSHELF_API_KEY = os.environ.get("BOOKSHELF_API_KEY", "")
+ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
+
+SERVICE_CONFIG = {
+    "sonarr": ("Sonarr", SONARR_URL, "sonarr_"),
+    "radarr": ("Radarr", RADARR_URL, "radarr_"),
+    "lidarr": ("Lidarr", LIDARR_URL, "lidarr_"),
+    "prowlarr": ("Prowlarr", PROWLARR_URL, "prowlarr_"),
+    "qbittorrent": ("qBittorrent", QBT_URL, "qbt_"),
+    "rdtclient": ("RDTClient", RDT_URL, "rdt_"),
+    "sabnzbd": ("SABnzbd", SAB_URL, "sab_"),
+    "jellyfin": ("Jellyfin", JELLYFIN_URL, "jellyfin_"),
+    "romm": ("RomM", ROMM_URL, "romm_"),
+    "gamevault": ("GameVault", GAMEVAULT_URL, "gamevault_"),
+    "bookshelf": ("Bookshelf", BOOKSHELF_URL, "bookshelf_"),
+}
+SERVICE_ALIASES = {
+    "qbt": "qbittorrent",
+    "sab": "sabnzbd",
+    "rdt": "rdtclient",
+    "game-vault": "gamevault",
+}
 
 mcp = FastMCP(
     "arrstack",
     instructions=(
-        "Homelab media stack tools for Sonarr (TV), Radarr (Movies), "
-        "Prowlarr (Indexers), qBittorrent (Downloads), Jellyfin (Streaming), "
+        "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
+        "Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), "
         "RomM (ROM library), and GameVault (PC game library). "
         "Use these tools to search, add, and manage media and game libraries.\n\n"
         "## Hungarian (HuN) / nCore workflow\n"
@@ -130,6 +159,25 @@ def _radarr(path: str, method: str = "GET", json=None, params=None):
         return _http_error("radarr", error)
 
 
+def _lidarr(path: str, method: str = "GET", json=None, params=None):
+    if not LIDARR_URL:
+        return "Lidarr is not configured. Set LIDARR_URL and LIDARR_API_KEY."
+    logger.info("lidarr %s %s", method, path)
+    try:
+        r = httpx.request(
+            method,
+            f"{LIDARR_URL}/api/v1{path}",
+            headers={"X-Api-Key": LIDARR_API_KEY},
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return _http_error("lidarr", e)
+
+
 _qbt_sid = None
 
 
@@ -169,6 +217,89 @@ def _qbt(path: str, method: str = "GET", data=None, params=None, _retry: bool = 
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("qBittorrent", error)
+
+
+_rdt_sid = None
+
+
+def _rdt(path: str, method: str = "GET", data=None, params=None, _retry: bool = False):
+    """Talk to RDTClient's qBittorrent-compatible API at /api/v2.
+
+    RDTClient is a .NET app that mimics qBittorrent's WebUI API, so the same
+    cookie-based session flow applies. Login may be required (depends on user
+    config). Mirrors `_qbt` discipline: single retry on 403, no recursion
+    beyond that, no logging of credentials.
+    """
+    global _rdt_sid
+    if not RDT_URL:
+        return "RDTClient is not configured. Set RDT_URL (and RDT_USER/RDT_PASS if login is enabled)."
+    logger.info("rdt %s %s", method, path)
+    try:
+        if not _rdt_sid:
+            login = httpx.post(
+                f"{RDT_URL}/api/v2/auth/login",
+                data={"username": RDT_USER, "password": RDT_PASS},
+                timeout=10,
+            )
+            login.raise_for_status()
+            # qBittorrent-compatible login returns "Ok." on success and sets a SID cookie.
+            # If login is disabled in RDTClient, the API may not require a cookie at all —
+            # treat absent SID + non-"Ok." body as a likely auth failure.
+            _rdt_sid = login.cookies.get("SID")
+            if not _rdt_sid and login.text.strip() != "Ok.":
+                logger.error("rdt login failed: %s", login.text[:80])
+                return "RDTClient login failed (check RDT_USER/RDT_PASS, or confirm login is required)."
+        r = httpx.request(
+            method,
+            f"{RDT_URL}/api/v2{path}",
+            cookies={"SID": _rdt_sid} if _rdt_sid else None,
+            data=data,
+            params=params,
+            timeout=30,
+        )
+        if r.status_code == 403:
+            _rdt_sid = None
+            if _retry:
+                logger.error("rdt 403 after retry; auth failure")
+                return "RDTClient auth failure: 403 after retry (check RDT_USER/RDT_PASS)."
+            return _rdt(path, method, data=data, params=params, _retry=True)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except (ValueError, json.JSONDecodeError):
+            return r.text
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return _http_error("rdt", e)
+
+
+def _rdt_native(path: str, method: str = "GET", json=None, params=None):
+    """Call RDTClient's native /api surface (e.g. /api/Settings, /api/Authentication).
+
+    Reuses the SID cookie established by `_rdt` if available. The native API may
+    require a different auth scheme on some installs; if you hit 401/403 for
+    everything here, extend this helper to do a fresh login.
+    """
+    global _rdt_sid
+    if not RDT_URL:
+        return "RDTClient is not configured. Set RDT_URL."
+    logger.info("rdt-native %s %s", method, path)
+    try:
+        cookies = {"SID": _rdt_sid} if _rdt_sid else None
+        r = httpx.request(
+            method,
+            f"{RDT_URL}{path}",
+            cookies=cookies,
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        try:
+            return r.json()
+        except (ValueError, json.JSONDecodeError):
+            return r.text
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return _http_error("rdt-native", e)
 
 
 def _jellyfin(path: str, params=None):
@@ -268,6 +399,107 @@ def _format_size(size_bytes) -> str:
         if size < 1024 or unit == "TB":
             return f"{size:.1f} {unit}"
         size /= 1024
+
+
+def _selected_services(value: str | None = None) -> set[str]:
+    """Resolve ENABLED_SERVICES into canonical service keys."""
+    raw = (value if value is not None else ENABLED_SERVICES).strip().lower()
+    if not raw or raw == "auto":
+        return {key for key, (_, url, _) in SERVICE_CONFIG.items() if url}
+    if raw == "all":
+        return set(SERVICE_CONFIG)
+
+    selected = set()
+    for item in raw.split(","):
+        key = SERVICE_ALIASES.get(item.strip(), item.strip())
+        if key not in SERVICE_CONFIG:
+            valid = ", ".join(SERVICE_CONFIG)
+            raise ValueError(f"Unknown service '{item.strip()}'. Valid services: {valid}")
+        selected.add(key)
+    return selected
+
+
+def _configure_service_tools(value: str | None = None) -> set[str]:
+    """Remove tools belonging to services that are not selected."""
+    selected = _selected_services(value)
+    disabled_prefixes = [
+        prefix
+        for key, (_, _, prefix) in SERVICE_CONFIG.items()
+        if key not in selected
+    ]
+    for tool in list(mcp._tool_manager.list_tools()):
+        if tool.name.startswith(tuple(disabled_prefixes)):
+            mcp.remove_tool(tool.name)
+    return selected
+
+
+def _print_service_status(value: str | None = None) -> None:
+    selected = _selected_services(value)
+    print("Service catalog:")
+    for key, (name, url, prefix) in SERVICE_CONFIG.items():
+        state = "enabled" if key in selected else "disabled"
+        configured = "configured" if url else "not configured"
+        count = sum(
+            tool.name.startswith(prefix) for tool in mcp._tool_manager.list_tools()
+        )
+        print(f"  {key:12} {state:8} {configured:14} {count:2} tools  ({name})")
+
+
+def _run_setup() -> None:
+    """Interactively build an ENABLED_SERVICES value without touching existing files."""
+    chosen = []
+    print("Choose which service toolsets this MCP server should advertise.")
+    for key, (name, url, _) in SERVICE_CONFIG.items():
+        default = "Y" if url else "N"
+        answer = input(f"Enable {name}? [{default}] ").strip().lower()
+        if answer == "y" or (not answer and default == "Y"):
+            chosen.append(key)
+    print("\nAdd this to your .env or Docker environment:")
+    print(f"ENABLED_SERVICES={','.join(chosen)}")
+
+
+def _sab(mode: str, **params):
+    if not SAB_URL or not SAB_API_KEY:
+        return "SABnzbd is not configured. Set SAB_URL and SAB_API_KEY."
+    # Log only the mode, never the apikey or values that may include secrets.
+    logger.info("sab GET mode=%s", mode)
+    try:
+        query = {"mode": mode, "apikey": SAB_API_KEY, "output": "json"}
+        # Drop None values; pass everything else as-is so httpx URL-encodes.
+        for k, v in params.items():
+            if v is not None:
+                query[k] = v
+        r = httpx.get(f"{SAB_URL}/sabnzbd/api", params=query, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return _http_error("sab", e)
+
+
+def _bookshelf(path: str, method: str = "GET", json=None, params=None):
+    """HTTP helper for Bookshelf (a Hardcover-flavored Readarr fork; Readarr v1 API)."""
+    if not BOOKSHELF_URL:
+        return "Bookshelf is not configured. Set BOOKSHELF_URL (and BOOKSHELF_API_KEY)."
+    logger.info("bookshelf %s %s", method, path)
+    headers = {}
+    if BOOKSHELF_API_KEY:
+        headers["X-Api-Key"] = BOOKSHELF_API_KEY
+    try:
+        r = httpx.request(
+            method,
+            f"{BOOKSHELF_URL}/api/v1{path}",
+            headers=headers,
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        try:
+            return r.json()
+        except (ValueError, json.JSONDecodeError):
+            return r.text
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        return _http_error("bookshelf", e)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -962,6 +1194,219 @@ def radarr_search_missing(movie_ids: str = "") -> str:
 
 
 # ════════════════════════════════════════════════════════════════
+#  Lidarr Tools
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def lidarr_list_artists() -> str:
+    """List all artists in Lidarr with monitoring status, album counts, and disk usage."""
+    data = _lidarr("/artist")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for a in sorted(data, key=lambda x: x.get("artistName", "")):
+        stats = a.get("statistics", {})
+        have = stats.get("trackFileCount", 0)
+        total = stats.get("trackCount", 0)
+        albums = stats.get("albumCount", 0)
+        size_gb = stats.get("sizeOnDisk", 0) / 1e9
+        icon = "✅" if a.get("monitored") else "⏸️"
+        lines.append(
+            f"{icon} [{a['id']}] {a.get('artistName', '?')} — "
+            f"{albums} albums, {have}/{total} tracks, {size_gb:.1f} GB"
+        )
+    return "\n".join(lines) or "No artists found."
+
+
+@mcp.tool()
+def lidarr_get_artist(artist_id: int) -> str:
+    """Get detailed info about a specific artist by their Lidarr ID."""
+    if artist_id <= 0:
+        return "Invalid artist_id."
+    a = _lidarr(f"/artist/{artist_id}")
+    if isinstance(a, str):
+        return a
+    stats = a.get("statistics", {})
+    lines = [
+        f"Name: {a.get('artistName', '?')}",
+        f"Status: {a.get('status', '?')}",
+        f"Monitored: {a.get('monitored', False)}",
+        f"Albums: {stats.get('albumCount', 0)}",
+        f"Tracks: {stats.get('trackFileCount', 0)}/{stats.get('trackCount', 0)}",
+        f"Size: {stats.get('sizeOnDisk', 0) / 1e9:.1f} GB",
+        f"Path: {a.get('path', '?')}",
+        f"MusicBrainz: {a.get('foreignArtistId', '?')}",
+        f"Overview: {(a.get('overview') or 'N/A')[:300]}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def lidarr_search(term: str) -> str:
+    """Search for an artist to add to Lidarr. Returns artist name and MusicBrainz ID."""
+    data = _lidarr("/artist/lookup", params={"term": term})
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data[:10]:
+        overview = (r.get("overview") or "No description.")[:150]
+        lines.append(
+            f"• {r.get('artistName', '?')} "
+            f"[mbId: {r.get('foreignArtistId', '?')}]\n  {overview}"
+        )
+    return "\n".join(lines) or "No results found."
+
+
+@mcp.tool()
+def lidarr_search_album(term: str) -> str:
+    """Search for an album in Lidarr's metadata source. Returns album title, artist, and MusicBrainz ID."""
+    data = _lidarr("/album/lookup", params={"term": term})
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data[:10]:
+        title = r.get("title", "?")
+        artist = r.get("artist", {}).get("artistName", "?") if isinstance(r.get("artist"), dict) else "?"
+        release = (r.get("releaseDate") or "?")[:10]
+        lines.append(
+            f"• {title} — {artist} ({release}) "
+            f"[mbId: {r.get('foreignAlbumId', '?')}]"
+        )
+    return "\n".join(lines) or "No results found."
+
+
+@mcp.tool()
+def lidarr_add_artist(
+    artist_name: str,
+    quality_profile_id: int,
+    metadata_profile_id: int,
+    root_folder_path: str,
+    monitored: bool = True,
+) -> str:
+    """Add an artist to Lidarr by name. Use lidarr_search to find the artist first.
+
+    Args:
+        artist_name: Artist name to look up and add.
+        quality_profile_id: Quality profile (use lidarr_list_quality_profiles).
+        metadata_profile_id: Metadata profile (use lidarr_list_metadata_profiles).
+        root_folder_path: Root folder path (use lidarr_list_root_folders).
+        monitored: Whether to monitor the artist (default: True).
+    """
+    lookup = _lidarr("/artist/lookup", params={"term": artist_name})
+    if isinstance(lookup, str):
+        return lookup
+    if not lookup:
+        return "Artist not found."
+    artist_data = lookup[0]
+    artist_data.update(
+        {
+            "qualityProfileId": quality_profile_id,
+            "metadataProfileId": metadata_profile_id,
+            "rootFolderPath": root_folder_path,
+            "monitored": monitored,
+            "addOptions": {"monitor": "all", "searchForMissingAlbums": True},
+        }
+    )
+    result = _lidarr("/artist", method="POST", json=artist_data)
+    if isinstance(result, dict):
+        return f"✅ Added: {result.get('artistName', '?')}"
+    return str(result)
+
+
+@mcp.tool()
+def lidarr_list_quality_profiles() -> str:
+    """List all quality profiles in Lidarr with their allowed qualities."""
+    data = _lidarr("/qualityprofile")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for p in data:
+        qualities = [
+            q.get("quality", q).get("name", "?")
+            for q in p.get("items", [])
+            if q.get("allowed")
+        ]
+        lines.append(
+            f"• [{p['id']}] {p['name']} — Allowed: {', '.join(qualities) or 'none'}"
+        )
+    return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def lidarr_list_metadata_profiles() -> str:
+    """List all metadata profiles in Lidarr (controls which release types/secondary types are tracked)."""
+    data = _lidarr("/metadataprofile")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for p in data:
+        lines.append(f"• [{p['id']}] {p.get('name', '?')}")
+    return "\n".join(lines) or "No metadata profiles found."
+
+
+@mcp.tool()
+def lidarr_list_root_folders() -> str:
+    """List all configured root folders in Lidarr with free space."""
+    data = _lidarr("/rootfolder")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data:
+        free_gb = r.get("freeSpace", 0) / 1e9
+        lines.append(f"• [{r.get('id', '?')}] {r.get('path', '?')} — {free_gb:.1f} GB free")
+    return "\n".join(lines) or "No root folders configured."
+
+
+@mcp.tool()
+def lidarr_queue() -> str:
+    """Show the current Lidarr download queue with status and queue IDs for each item."""
+    data = _lidarr("/queue", params={"pageSize": 50, "includeUnknownArtistItems": "true"})
+    if isinstance(data, str):
+        return data
+    records = data.get("records", []) if isinstance(data, dict) else []
+    lines = []
+    for r in records:
+        title = r.get("title", "?")
+        status = r.get("status", "?")
+        sizeleft = r.get("sizeleft", 0) / 1e9
+        lines.append(f"• [queueId: {r['id']}] {title} — {status} ({sizeleft:.1f} GB remaining)")
+    return "\n".join(lines) or "Queue is empty."
+
+
+@mcp.tool()
+def lidarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
+    """Remove an item from the Lidarr download queue.
+
+    Args:
+        queue_id: Queue item ID (use lidarr_queue to find it).
+        blocklist: If True, adds the release to the blocklist so it won't be grabbed again.
+    """
+    if queue_id <= 0:
+        return "Invalid queue_id."
+    try:
+        r = httpx.delete(
+            f"{LIDARR_URL}/api/v1/queue/{queue_id}",
+            headers={"X-Api-Key": LIDARR_API_KEY},
+            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
+    except httpx.HTTPStatusError as e:
+        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+
+
+@mcp.tool()
+def lidarr_search_missing() -> str:
+    """Trigger a search for all missing albums in Lidarr."""
+    result = _lidarr("/command", method="POST", json={"name": "MissingAlbumSearch"})
+    if isinstance(result, dict):
+        return "🔍 Search triggered for all missing albums."
+    return str(result)
+
+
+# ════════════════════════════════════════════════════════════════
 #  Prowlarr Tools
 # ════════════════════════════════════════════════════════════════
 
@@ -1250,6 +1695,159 @@ def qbt_transfer_info() -> str:
 
 
 # ════════════════════════════════════════════════════════════════
+#  RDTClient Tools
+# ════════════════════════════════════════════════════════════════
+#
+# RDTClient (https://github.com/rogerfar/rdt-client) is a Real-Debrid /
+# AllDebrid / Premiumize download manager that exposes a qBittorrent-compatible
+# API at /api/v2 plus a native /api surface. We use the qBT-compat surface for
+# everything the *arr stack already understands, and reach into the native API
+# for things qBT doesn't model (e.g. provider settings).
+
+
+@mcp.tool()
+def rdt_list_torrents(filter: str = "all") -> str:
+    """List torrents in RDTClient.
+
+    Args:
+        filter: Filter — "all", "downloading", "seeding", "completed", "paused", "active", "stalled".
+    """
+    data = _rdt("/torrents/info", params={"filter": filter})
+    if isinstance(data, str):
+        return data
+    if not data:
+        return "No torrents."
+    lines = []
+    for t in data:
+        progress = t.get("progress", 0) * 100
+        state = t.get("state", "?")
+        size_gb = t.get("size", 0) / 1e9
+        name = t.get("name", "?")
+        dl = t.get("dlspeed", 0) / 1e6
+        up = t.get("upspeed", 0) / 1e6
+        speed = ""
+        if dl > 0.01:
+            speed += f" ↓{dl:.1f} MB/s"
+        if up > 0.01:
+            speed += f" ↑{up:.1f} MB/s"
+        h = t.get("hash", "?")
+        lines.append(f"• [{h}] {name} — {progress:.0f}% [{state}] {size_gb:.1f} GB{speed}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def rdt_torrent_details(torrent_hash: str) -> str:
+    """Get detailed info about a specific RDTClient torrent by its hash.
+
+    Args:
+        torrent_hash: The info hash of the torrent.
+    """
+    props = _rdt("/torrents/properties", params={"hash": torrent_hash})
+    if isinstance(props, str):
+        return props
+    lines = [
+        f"Save path: {props.get('save_path', '?')}",
+        f"Total size: {props.get('total_size', 0) / 1e9:.2f} GB",
+        f"Downloaded: {props.get('total_downloaded', 0) / 1e9:.2f} GB",
+        f"Uploaded: {props.get('total_uploaded', 0) / 1e9:.2f} GB",
+        f"Ratio: {props.get('share_ratio', 0):.2f}",
+        f"Seeds: {props.get('seeds', 0)} | Peers: {props.get('peers', 0)}",
+        f"Added on: {props.get('addition_date', '?')}",
+        f"Comment: {props.get('comment', 'N/A')}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def rdt_add_magnet(magnet: str, category: str = "") -> str:
+    """Add a magnet link to RDTClient (which sends it to your debrid provider).
+
+    Args:
+        magnet: The magnet URI to add.
+        category: Optional category to assign (e.g. "tv", "movies").
+    """
+    result = _rdt("/torrents/add", method="POST", data={"urls": magnet, "category": category})
+    if isinstance(result, str) and result.strip() == "Ok.":
+        return "✅ Torrent added to RDTClient."
+    return f"Result: {result}"
+
+
+@mcp.tool()
+def rdt_pause(torrent_hashes: str) -> str:
+    """Pause one or more RDTClient torrents. Pipe-separate hashes, or use 'all'.
+
+    Args:
+        torrent_hashes: Hash, "hash1|hash2", or "all".
+    """
+    _rdt("/torrents/pause", method="POST", data={"hashes": torrent_hashes})
+    return "⏸️ Paused."
+
+
+@mcp.tool()
+def rdt_resume(torrent_hashes: str) -> str:
+    """Resume one or more RDTClient torrents. Pipe-separate hashes, or use 'all'.
+
+    Args:
+        torrent_hashes: Hash, "hash1|hash2", or "all".
+    """
+    _rdt("/torrents/resume", method="POST", data={"hashes": torrent_hashes})
+    return "▶️ Resumed."
+
+
+@mcp.tool()
+def rdt_delete(torrent_hashes: str, delete_files: bool = False) -> str:
+    """Delete one or more RDTClient torrents. Pipe-separate hashes, or use 'all'.
+
+    Args:
+        torrent_hashes: Hash, "hash1|hash2", or "all".
+        delete_files: If True, also delete downloaded files from disk.
+    """
+    _rdt(
+        "/torrents/delete",
+        method="POST",
+        data={"hashes": torrent_hashes, "deleteFiles": str(delete_files).lower()},
+    )
+    return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
+
+
+@mcp.tool()
+def rdt_provider_status() -> str:
+    """Show Real-Debrid / AllDebrid / Premiumize provider status from RDTClient.
+
+    Reads from RDTClient's native /api/Settings endpoint to surface the configured
+    debrid provider. Requires the same auth as the qBT-compat API; if your
+    RDTClient install requires login, set RDT_USER/RDT_PASS.
+    """
+    data = _rdt_native("/api/Settings")
+    if isinstance(data, str):
+        return data
+    provider = "?"
+    keys_of_interest = {}
+    if isinstance(data, dict):
+        groups = data.get("settings") if isinstance(data.get("settings"), list) else None
+        if groups:
+            for g in groups:
+                if str(g.get("key", "")).lower() == "provider":
+                    for child in g.get("children", []) or []:
+                        k = child.get("key")
+                        v = child.get("value")
+                        if k:
+                            keys_of_interest[k] = v
+                            if k.lower() == "provider":
+                                provider = v
+        else:
+            provider = data.get("Provider") or data.get("provider") or "?"
+    lines = [f"Provider: {provider}"]
+    for k, v in keys_of_interest.items():
+        if k.lower() == "provider":
+            continue
+        if any(s in k.lower() for s in ("token", "key", "password", "apikey")):
+            v = "***" if v else "(unset)"
+        lines.append(f"  {k}: {v}")
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
 #  Jellyfin Tools
 # ════════════════════════════════════════════════════════════════
 
@@ -1507,6 +2105,324 @@ def gamevault_reindex() -> str:
     return f"GameVault reindex complete. Indexed {len(data)} games."
 
 
+# ════════════════════════════════════════════════════════════════
+#  SABnzbd Tools
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def sab_queue() -> str:
+    """Show the current SABnzbd download queue."""
+    return str(_sab("queue"))
+
+
+@mcp.tool()
+def sab_history() -> str:
+    """Show SABnzbd download history."""
+    return str(_sab("history"))
+
+
+@mcp.tool()
+def sab_status() -> str:
+    """Show SABnzbd full status (server, disk space, speed, etc.)."""
+    return str(_sab("fullstatus"))
+
+
+@mcp.tool()
+def sab_pause() -> str:
+    """Pause the entire SABnzbd queue."""
+    return str(_sab("pause"))
+
+
+@mcp.tool()
+def sab_resume() -> str:
+    """Resume the entire SABnzbd queue."""
+    return str(_sab("resume"))
+
+
+@mcp.tool()
+def sab_pause_job(nzo_id: str) -> str:
+    """Pause a specific SABnzbd queue item.
+
+    Args:
+        nzo_id: The NZO id of the queue item (use sab_queue to find it).
+    """
+    if not nzo_id:
+        return "Invalid nzo_id."
+    return str(_sab("queue", name="pause", value=nzo_id))
+
+
+@mcp.tool()
+def sab_resume_job(nzo_id: str) -> str:
+    """Resume a specific SABnzbd queue item.
+
+    Args:
+        nzo_id: The NZO id of the queue item.
+    """
+    if not nzo_id:
+        return "Invalid nzo_id."
+    return str(_sab("queue", name="resume", value=nzo_id))
+
+
+@mcp.tool()
+def sab_delete_job(nzo_id: str, delete_files: bool = False) -> str:
+    """Delete a job from the SABnzbd queue.
+
+    Args:
+        nzo_id: The NZO id of the queue item.
+        delete_files: If True, also delete any files already downloaded.
+    """
+    if not nzo_id:
+        return "Invalid nzo_id."
+    params = {"name": "delete", "value": nzo_id}
+    if delete_files:
+        params["del_files"] = 1
+    return str(_sab("queue", **params))
+
+
+@mcp.tool()
+def sab_add_url(nzb_url: str, category: str = "", priority: int = -100) -> str:
+    """Add an NZB by URL to SABnzbd.
+
+    Args:
+        nzb_url: URL pointing at an NZB file.
+        category: Optional SAB category (default: empty = default category).
+        priority: SABnzbd priority (-100 = default, -2..2 supported).
+    """
+    if not nzb_url:
+        return "Invalid nzb_url."
+    params = {"name": nzb_url, "priority": priority}
+    if category:
+        params["cat"] = category
+    return str(_sab("addurl", **params))
+
+
+@mcp.tool()
+def sab_speed_limit(percent: int) -> str:
+    """Set the SABnzbd global speed limit as a percentage of the configured max.
+
+    Args:
+        percent: Speed-limit percentage, 0..100 (0 = pause-by-throttle, 100 = full speed).
+    """
+    if not isinstance(percent, int) or percent < 0 or percent > 100:
+        return "Invalid percent (must be an integer 0..100)."
+    return str(_sab("config", name="speedlimit", value=percent))
+
+
+# ════════════════════════════════════════════════════════════════
+#  Bookshelf Tools (Hardcover-flavored Readarr fork; Readarr v1 API)
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def bookshelf_health() -> str:
+    """Check Bookshelf health: returns app version, build, and any active health issues."""
+    status = _bookshelf("/system/status")
+    if isinstance(status, str):
+        return status
+    health = _bookshelf("/health")
+    lines = [
+        f"App: {status.get('appName', '?')} {status.get('version', '?')}",
+        f"Branch: {status.get('branch', '?')}",
+        f"Build: {status.get('buildTime', '?')}",
+        f"Runtime: {status.get('runtimeName', '?')} {status.get('runtimeVersion', '?')}",
+    ]
+    if isinstance(health, list):
+        if not health:
+            lines.append("Health: ✅ no issues")
+        else:
+            lines.append(f"Health: ⚠️  {len(health)} issue(s)")
+            for h in health:
+                lines.append(f"  • [{h.get('type', '?')}] {h.get('source', '?')}: {h.get('message', '?')}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def bookshelf_list_authors() -> str:
+    """List all authors in Bookshelf with monitoring status, book counts, and disk usage."""
+    data = _bookshelf("/author")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for a in sorted(data, key=lambda x: x.get("authorName", "")):
+        stats = a.get("statistics", {}) or {}
+        have = stats.get("bookFileCount", 0)
+        total = stats.get("bookCount", 0)
+        size_gb = stats.get("sizeOnDisk", 0) / 1e9
+        icon = "✅" if a.get("monitored") else "⏸️"
+        lines.append(
+            f"{icon} [{a.get('id', '?')}] {a.get('authorName', '?')} — "
+            f"{have}/{total} books, {size_gb:.2f} GB"
+        )
+    return "\n".join(lines) or "No authors found."
+
+
+@mcp.tool()
+def bookshelf_get_author(author_id: int) -> str:
+    """Get detailed info about a specific author by their Bookshelf ID."""
+    if author_id <= 0:
+        return "Invalid author_id."
+    a = _bookshelf(f"/author/{author_id}")
+    if isinstance(a, str):
+        return a
+    stats = a.get("statistics", {}) or {}
+    lines = [
+        f"Name: {a.get('authorName', '?')}",
+        f"Status: {a.get('status', '?')}",
+        f"Monitored: {a.get('monitored', False)}",
+        f"Books: {stats.get('bookFileCount', 0)}/{stats.get('bookCount', 0)}",
+        f"Size: {stats.get('sizeOnDisk', 0) / 1e9:.2f} GB",
+        f"Path: {a.get('path', '?')}",
+        f"Hardcover ID: {a.get('foreignAuthorId', '?')}",
+        f"Overview: {(a.get('overview') or 'N/A')[:300]}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def bookshelf_search_author(term: str) -> str:
+    """Search Bookshelf's metadata source (Hardcover) for an author. Returns name and Hardcover ID."""
+    data = _bookshelf("/author/lookup", params={"term": term})
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data[:10]:
+        overview = (r.get("overview") or "No description.")[:150].replace("\n", " ")
+        lines.append(
+            f"• {r.get('authorName', '?')} "
+            f"[hardcoverId: {r.get('foreignAuthorId', '?')}]\n  {overview}"
+        )
+    return "\n".join(lines) or "No results found."
+
+
+@mcp.tool()
+def bookshelf_search_book(term: str) -> str:
+    """Search Bookshelf's metadata source (Hardcover) for a book. Returns title, author, and IDs."""
+    data = _bookshelf("/book/lookup", params={"term": term})
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data[:10]:
+        title = r.get("title", "?")
+        author = "?"
+        a = r.get("author")
+        if isinstance(a, dict):
+            author = a.get("authorName", "?")
+        release = (r.get("releaseDate") or "?")[:10]
+        lines.append(
+            f"• {title} — {author} ({release}) "
+            f"[bookId: {r.get('foreignBookId', '?')}]"
+        )
+    return "\n".join(lines) or "No results found."
+
+
+@mcp.tool()
+def bookshelf_list_books() -> str:
+    """List all books currently tracked in Bookshelf (title, author, monitored, page count)."""
+    data = _bookshelf("/book")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for b in data:
+        title = b.get("title", "?")
+        author = "?"
+        a = b.get("author")
+        if isinstance(a, dict):
+            author = a.get("authorName", "?")
+        pages = b.get("pageCount", 0) or 0
+        icon = "✅" if b.get("monitored") else "⏸️"
+        release = (b.get("releaseDate") or "?")[:10]
+        lines.append(
+            f"{icon} [{b.get('id', '?')}] {title} — {author} ({release}, {pages}p)"
+        )
+    return "\n".join(lines) or "No books found."
+
+
+@mcp.tool()
+def bookshelf_queue() -> str:
+    """Show the current Bookshelf download queue with status and queue IDs."""
+    data = _bookshelf("/queue", params={"pageSize": 50, "includeUnknownAuthorItems": "true"})
+    if isinstance(data, str):
+        return data
+    records = data.get("records", []) if isinstance(data, dict) else []
+    lines = []
+    for r in records:
+        title = r.get("title", "?")
+        status = r.get("status", "?")
+        sizeleft = (r.get("sizeleft", 0) or 0) / 1e9
+        lines.append(f"• [queueId: {r.get('id', '?')}] {title} — {status} ({sizeleft:.2f} GB remaining)")
+    return "\n".join(lines) or "Queue is empty."
+
+
+@mcp.tool()
+def bookshelf_wanted_missing(page_size: int = 20) -> str:
+    """List books Bookshelf has flagged as missing (monitored but no file). Paged; default 20."""
+    if page_size <= 0 or page_size > 200:
+        page_size = 20
+    data = _bookshelf("/wanted/missing", params={"pageSize": page_size})
+    if isinstance(data, str):
+        return data
+    records = data.get("records", []) if isinstance(data, dict) else []
+    total = data.get("totalRecords", len(records)) if isinstance(data, dict) else len(records)
+    lines = [f"Total missing: {total} (showing {len(records)})"]
+    for r in records:
+        title = r.get("title", "?")
+        release = (r.get("releaseDate") or "?")[:10]
+        lines.append(f"• [bookId: {r.get('id', '?')}] {title} ({release})")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def bookshelf_list_quality_profiles() -> str:
+    """List all quality profiles configured in Bookshelf with their allowed qualities."""
+    data = _bookshelf("/qualityprofile")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for p in data:
+        qualities = [
+            (q.get("quality") or {}).get("name", "?")
+            for q in p.get("items", [])
+            if q.get("allowed") and isinstance(q.get("quality"), dict)
+        ]
+        lines.append(
+            f"• [{p.get('id', '?')}] {p.get('name', '?')} — Allowed: {', '.join(qualities) or 'none'}"
+        )
+    return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def bookshelf_list_metadata_profiles() -> str:
+    """List all metadata profiles in Bookshelf (controls which release types/secondary types are tracked)."""
+    data = _bookshelf("/metadataprofile")
+    if isinstance(data, str):
+        return data
+    lines = [f"• [{p.get('id', '?')}] {p.get('name', '?')}" for p in data]
+    return "\n".join(lines) or "No metadata profiles found."
+
+
+@mcp.tool()
+def bookshelf_list_root_folders() -> str:
+    """List all configured root folders in Bookshelf with free space."""
+    data = _bookshelf("/rootfolder")
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data:
+        free_gb = (r.get("freeSpace", 0) or 0) / 1e9
+        lines.append(f"• [{r.get('id', '?')}] {r.get('path', '?')} — {free_gb:.1f} GB free")
+    return "\n".join(lines) or "No root folders configured."
+
+
+@mcp.tool()
+def bookshelf_search_missing() -> str:
+    """Trigger Bookshelf to search for all missing monitored books."""
+    result = _bookshelf("/command", method="POST", json={"name": "MissingBookSearch"})
+    if isinstance(result, dict):
+        return "🔍 Search triggered for all missing books."
+    return str(result)
+
+
 # ── Entrypoint ──
 
 def main():
@@ -1521,33 +2437,41 @@ def main():
     )
     parser.add_argument("--port", type=int, default=8000, help="HTTP port (default: 8000)")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP bind host (default: 0.0.0.0)")
+    parser.add_argument(
+        "--list-services",
+        action="store_true",
+        help="Show configured/enabled services and their tool counts, then exit",
+    )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Interactively generate an ENABLED_SERVICES setting, then exit",
+    )
     args = parser.parse_args()
 
-    enabled = []
-    if SONARR_URL:
-        enabled.append("Sonarr")
-    if RADARR_URL:
-        enabled.append("Radarr")
-    if PROWLARR_URL:
-        enabled.append("Prowlarr")
-    if QBT_URL:
-        enabled.append("qBittorrent")
-    if JELLYFIN_URL:
-        enabled.append("Jellyfin")
-    if ROMM_URL:
-        enabled.append("RomM")
-    if GAMEVAULT_URL:
-        enabled.append("GameVault")
+    try:
+        if args.list_services:
+            _print_service_status()
+            return
+        if args.setup:
+            _run_setup()
+            return
+        selected = _configure_service_tools()
+    except ValueError as error:
+        parser.error(str(error))
 
-    if not enabled:
+    if not selected:
         print(
-            "⚠️  No services configured. Set at least one of: "
-            "SONARR_URL, RADARR_URL, QBT_URL, JELLYFIN_URL, ROMM_URL, GAMEVAULT_URL",
+            "⚠️  No services enabled. Configure at least one service URL or set "
+            "ENABLED_SERVICES to a comma-separated service list.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    print(f"🎬 arrstack-mcp starting ({', '.join(enabled)})", file=sys.stderr)
+    enabled_names = [SERVICE_CONFIG[key][0] for key in SERVICE_CONFIG if key in selected]
+    tool_count = len(mcp._tool_manager.list_tools())
+    print(f"🎬 arrstack-mcp starting ({', '.join(enabled_names)})", file=sys.stderr)
+    print(f"   Advertised tools: {tool_count}", file=sys.stderr)
     print(f"   Transport: {args.transport}", file=sys.stderr)
 
     if args.transport == "stdio":
