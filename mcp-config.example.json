@@ -13,7 +13,13 @@
         "QBT_PASS": "your-password",
         "JELLYFIN_URL": "http://localhost:8096",
         "PROWLARR_URL": "http://localhost:9696",
-        "PROWLARR_API_KEY": "your-api-key"
+        "PROWLARR_API_KEY": "your-api-key",
+        "ROMM_URL": "http://localhost:8081",
+        "ROMM_API_TOKEN": "your-api-token",
+        "GAMEVAULT_URL": "http://localhost:8082",
+        "GAMEVAULT_API_KEY": "your-api-key",
+        "MCP_ALLOWED_HOSTS": "localhost:*,127.0.0.1:*",
+        "LOG_LEVEL": "INFO"
       }
     }
   }

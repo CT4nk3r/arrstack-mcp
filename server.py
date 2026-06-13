@@ -1,5 +1,6 @@
 """
-arrstack-mcp — MCP server for Sonarr, Radarr, Prowlarr, qBittorrent & Jellyfin.
+arrstack-mcp — MCP server for Sonarr, Radarr, Prowlarr, qBittorrent, Jellyfin,
+RomM, and GameVault.
 
 Exposes your *arr media stack as MCP tools so any AI assistant
 (Claude Desktop, Cursor, VS Code Copilot, OpenClaw, etc.) can
@@ -8,12 +9,17 @@ search, add, and manage your media library.
 
 import os
 import sys
+import json
 import argparse
 import logging
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 logger = logging.getLogger("arrstack-mcp")
 
 # ── Configuration ──
@@ -29,13 +35,27 @@ PROWLARR_URL = os.environ.get("PROWLARR_URL", "").rstrip("/")
 PROWLARR_API_KEY = os.environ.get("PROWLARR_API_KEY", "")
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
 JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
+ROMM_URL = os.environ.get("ROMM_URL", "").rstrip("/")
+ROMM_API_TOKEN = os.environ.get("ROMM_API_TOKEN", "")
+ROMM_USER = os.environ.get("ROMM_USER", "")
+ROMM_PASS = os.environ.get("ROMM_PASS", "")
+GAMEVAULT_URL = os.environ.get("GAMEVAULT_URL", "").rstrip("/")
+GAMEVAULT_API_KEY = os.environ.get("GAMEVAULT_API_KEY", "")
+MCP_ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get(
+        "MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*,[::1]:*"
+    ).split(",")
+    if host.strip()
+]
 
 mcp = FastMCP(
     "arrstack",
     instructions=(
         "Homelab media stack tools for Sonarr (TV), Radarr (Movies), "
-        "Prowlarr (Indexers), qBittorrent (Downloads), and Jellyfin (Streaming). "
-        "Use these tools to search, add, and manage media.\n\n"
+        "Prowlarr (Indexers), qBittorrent (Downloads), Jellyfin (Streaming), "
+        "RomM (ROM library), and GameVault (PC game library). "
+        "Use these tools to search, add, and manage media and game libraries.\n\n"
         "## Hungarian (HuN) / nCore workflow\n"
         "nCore is a Hungarian private tracker with dual-audio (HuN) releases. "
         "When the user wants Hungarian releases:\n"
@@ -52,89 +72,202 @@ mcp = FastMCP(
         "4. If existing files need replacing (e.g. English → HuN), delete the movie file "
         "with radarr_delete_movie_file / sonarr_delete_episode_file first, then search.\n"
     ),
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=MCP_ALLOWED_HOSTS,
+    ),
 )
 
 # ── HTTP helpers ──
 
 
-def _sonarr(path: str, method: str = "GET", json=None):
+def _http_error(service: str, error: Exception) -> str:
+    """Format an HTTP error without exposing credentials or request headers."""
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        body = error.response.text[:200] if error.response is not None else ""
+        logger.error("%s HTTP %s: %s", service, status, body)
+        return f"{service} request failed: HTTP {status} — {body}"
+    logger.error("%s request error: %s", service, error)
+    return f"{service} request error: {error}"
+
+
+def _sonarr(path: str, method: str = "GET", json=None, params=None):
     if not SONARR_URL:
         return "Sonarr is not configured. Set SONARR_URL and SONARR_API_KEY."
-    r = httpx.request(
-        method,
-        f"{SONARR_URL}/api/v3{path}",
-        headers={"X-Api-Key": SONARR_API_KEY},
-        json=json,
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+    logger.info("sonarr %s %s", method, path)
+    try:
+        r = httpx.request(
+            method,
+            f"{SONARR_URL}/api/v3{path}",
+            headers={"X-Api-Key": SONARR_API_KEY},
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("sonarr", error)
 
 
-def _radarr(path: str, method: str = "GET", json=None):
+def _radarr(path: str, method: str = "GET", json=None, params=None):
     if not RADARR_URL:
         return "Radarr is not configured. Set RADARR_URL and RADARR_API_KEY."
-    r = httpx.request(
-        method,
-        f"{RADARR_URL}/api/v3{path}",
-        headers={"X-Api-Key": RADARR_API_KEY},
-        json=json,
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+    logger.info("radarr %s %s", method, path)
+    try:
+        r = httpx.request(
+            method,
+            f"{RADARR_URL}/api/v3{path}",
+            headers={"X-Api-Key": RADARR_API_KEY},
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("radarr", error)
 
 
 _qbt_sid = None
 
 
-def _qbt(path: str, method: str = "GET", data=None):
+def _qbt(path: str, method: str = "GET", data=None, params=None, _retry: bool = False):
     global _qbt_sid
     if not QBT_URL:
         return "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
-    if not _qbt_sid:
-        r = httpx.post(
-            f"{QBT_URL}/api/v2/auth/login",
-            data={"username": QBT_USER, "password": QBT_PASS},
-            timeout=10,
-        )
-        _qbt_sid = r.cookies.get("SID")
-    r = httpx.request(
-        method, f"{QBT_URL}/api/v2{path}", cookies={"SID": _qbt_sid}, data=data, timeout=30
-    )
-    if r.status_code == 403:
-        _qbt_sid = None
-        return _qbt(path, method, data)
+    logger.info("qbt %s %s", method, path)
     try:
-        return r.json()
-    except Exception:
-        return r.text
+        if not _qbt_sid:
+            login = httpx.post(
+                f"{QBT_URL}/api/v2/auth/login",
+                data={"username": QBT_USER, "password": QBT_PASS},
+                timeout=10,
+            )
+            login.raise_for_status()
+            _qbt_sid = login.cookies.get("SID")
+            if not _qbt_sid:
+                return "qBittorrent login failed: no SID cookie returned."
+        r = httpx.request(
+            method,
+            f"{QBT_URL}/api/v2{path}",
+            cookies={"SID": _qbt_sid},
+            data=data,
+            params=params,
+            timeout=30,
+        )
+        if r.status_code == 403:
+            _qbt_sid = None
+            if _retry:
+                return "qBittorrent auth failure: 403 after retry."
+            return _qbt(path, method, data=data, params=params, _retry=True)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except (ValueError, json.JSONDecodeError):
+            return r.text
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("qBittorrent", error)
 
 
-def _jellyfin(path: str):
+def _jellyfin(path: str, params=None):
     if not JELLYFIN_URL:
         return "Jellyfin is not configured. Set JELLYFIN_URL."
+    logger.info("jellyfin GET %s", path)
     headers = {}
     if JELLYFIN_API_KEY:
         headers["X-Emby-Token"] = JELLYFIN_API_KEY
-    r = httpx.get(f"{JELLYFIN_URL}{path}", headers=headers, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = httpx.get(f"{JELLYFIN_URL}{path}", headers=headers, params=params, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("jellyfin", error)
 
 
-def _prowlarr(path: str, method: str = "GET", json=None):
+def _prowlarr(path: str, method: str = "GET", json=None, params=None):
     if not PROWLARR_URL:
         return "Prowlarr is not configured. Set PROWLARR_URL and PROWLARR_API_KEY."
-    r = httpx.request(
-        method,
-        f"{PROWLARR_URL}/api/v1{path}",
-        headers={"X-Api-Key": PROWLARR_API_KEY},
-        json=json,
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+    logger.info("prowlarr %s %s", method, path)
+    try:
+        r = httpx.request(
+            method,
+            f"{PROWLARR_URL}/api/v1{path}",
+            headers={"X-Api-Key": PROWLARR_API_KEY},
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("prowlarr", error)
+
+
+def _romm(path: str, method: str = "GET", params=None, json=None, public: bool = False):
+    if not ROMM_URL:
+        return "RomM is not configured. Set ROMM_URL."
+    if not public and not ROMM_API_TOKEN and not (ROMM_USER and ROMM_PASS):
+        return (
+            "RomM authentication is not configured. Set ROMM_API_TOKEN or "
+            "ROMM_USER and ROMM_PASS."
+        )
+
+    headers = {}
+    auth = None
+    if ROMM_API_TOKEN:
+        headers["Authorization"] = f"Bearer {ROMM_API_TOKEN}"
+    elif ROMM_USER and ROMM_PASS:
+        auth = httpx.BasicAuth(ROMM_USER, ROMM_PASS)
+
+    logger.info("romm %s %s", method, path)
+    try:
+        r = httpx.request(
+            method,
+            f"{ROMM_URL}{path}",
+            headers=headers,
+            auth=auth,
+            params=params,
+            json=json,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("RomM", error)
+
+
+def _gamevault(path: str, method: str = "GET", params=None):
+    if not GAMEVAULT_URL:
+        return "GameVault is not configured. Set GAMEVAULT_URL."
+    if not GAMEVAULT_API_KEY:
+        return "GameVault authentication is not configured. Set GAMEVAULT_API_KEY."
+
+    logger.info("gamevault %s %s", method, path)
+    try:
+        r = httpx.request(
+            method,
+            f"{GAMEVAULT_URL}{path}",
+            headers={"X-Api-Key": GAMEVAULT_API_KEY},
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("GameVault", error)
+
+
+def _format_size(size_bytes) -> str:
+    try:
+        size = float(size_bytes)
+    except (TypeError, ValueError):
+        return "unknown size"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
 
 
 # ════════════════════════════════════════════════════════════════
@@ -172,6 +305,8 @@ def sonarr_list_series() -> str:
 @mcp.tool()
 def sonarr_get_series(series_id: int) -> str:
     """Get detailed info about a specific TV series by its Sonarr ID."""
+    if series_id <= 0:
+        return "Invalid series_id."
     s = _sonarr(f"/series/{series_id}")
     if isinstance(s, str):
         return s
@@ -203,7 +338,7 @@ def sonarr_get_series(series_id: int) -> str:
 @mcp.tool()
 def sonarr_search(term: str) -> str:
     """Search for a TV series to add to Sonarr. Returns title, year, TVDB ID, and overview."""
-    data = _sonarr(f"/series/lookup?term={term}")
+    data = _sonarr("/series/lookup", params={"term": term})
     if isinstance(data, str):
         return data
     lines = []
@@ -227,7 +362,9 @@ def sonarr_add_series(
         quality_profile_id: Quality profile to use (default: 1).
         monitor: Episodes to monitor — "all", "future", "missing", "pilot", "none".
     """
-    lookup = _sonarr(f"/series/lookup?term=tvdb:{tvdb_id}")
+    if tvdb_id <= 0:
+        return "Invalid tvdb_id."
+    lookup = _sonarr("/series/lookup", params={"term": f"tvdb:{tvdb_id}"})
     if isinstance(lookup, str):
         return lookup
     if not lookup:
@@ -260,7 +397,7 @@ def sonarr_upcoming(days: int = 7) -> str:
 
     start = datetime.now().strftime("%Y-%m-%d")
     end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-    data = _sonarr(f"/calendar?start={start}&end={end}")
+    data = _sonarr("/calendar", params={"start": start, "end": end})
     if isinstance(data, str):
         return data
     lines = []
@@ -403,6 +540,8 @@ def sonarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
         queue_id: Queue item ID (use sonarr_queue to find it).
         blocklist: If True, adds the release to the blocklist so it won't be grabbed again.
     """
+    if queue_id <= 0:
+        return "Invalid queue_id."
     try:
         r = httpx.delete(
             f"{SONARR_URL}/api/v3/queue/{queue_id}",
@@ -412,8 +551,8 @@ def sonarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
         )
         r.raise_for_status()
         return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("sonarr", error)
 
 
 @mcp.tool()
@@ -424,6 +563,8 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
     Args:
         episode_file_id: Episode file ID (use sonarr_get_series to find file IDs).
     """
+    if episode_file_id <= 0:
+        return "Invalid episode_file_id."
     try:
         r = httpx.delete(
             f"{SONARR_URL}/api/v3/episodefile/{episode_file_id}",
@@ -432,8 +573,8 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
         )
         r.raise_for_status()
         return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("sonarr", error)
 
 
 @mcp.tool()
@@ -462,6 +603,8 @@ def sonarr_update_series(series_id: int, quality_profile_id: int = -1, monitored
         quality_profile_id: New quality profile ID (-1 to keep current).
         monitored: Set to 1 to monitor, 0 to unmonitor (-1 to keep current).
     """
+    if series_id <= 0:
+        return "Invalid series_id."
     series = _sonarr(f"/series/{series_id}")
     if isinstance(series, str):
         return series
@@ -516,6 +659,8 @@ def radarr_list_movies() -> str:
 @mcp.tool()
 def radarr_get_movie(movie_id: int) -> str:
     """Get detailed info about a specific movie by its Radarr ID."""
+    if movie_id <= 0:
+        return "Invalid movie_id."
     m = _radarr(f"/movie/{movie_id}")
     if isinstance(m, str):
         return m
@@ -546,7 +691,7 @@ def radarr_get_movie(movie_id: int) -> str:
 @mcp.tool()
 def radarr_search(term: str) -> str:
     """Search for a movie to add to Radarr. Returns title, year, TMDB ID, and overview."""
-    data = _radarr(f"/movie/lookup?term={term}")
+    data = _radarr("/movie/lookup", params={"term": term})
     if isinstance(data, str):
         return data
     lines = []
@@ -567,7 +712,9 @@ def radarr_add_movie(tmdb_id: int, quality_profile_id: int = 1) -> str:
         tmdb_id: The TMDB ID of the movie.
         quality_profile_id: Quality profile to use (default: 1).
     """
-    lookup = _radarr(f"/movie/lookup/tmdb?tmdbId={tmdb_id}")
+    if tmdb_id <= 0:
+        return "Invalid tmdb_id."
+    lookup = _radarr("/movie/lookup/tmdb", params={"tmdbId": tmdb_id})
     if isinstance(lookup, str):
         return lookup
     movie_data = lookup if isinstance(lookup, dict) else lookup[0]
@@ -716,6 +863,8 @@ def radarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
         queue_id: Queue item ID (use radarr_queue to find it).
         blocklist: If True, adds the release to the blocklist so it won't be grabbed again.
     """
+    if queue_id <= 0:
+        return "Invalid queue_id."
     try:
         r = httpx.delete(
             f"{RADARR_URL}/api/v3/queue/{queue_id}",
@@ -725,8 +874,8 @@ def radarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
         )
         r.raise_for_status()
         return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("radarr", error)
 
 
 @mcp.tool()
@@ -737,6 +886,8 @@ def radarr_delete_movie_file(movie_id: int) -> str:
     Args:
         movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
     """
+    if movie_id <= 0:
+        return "Invalid movie_id."
     movie = _radarr(f"/movie/{movie_id}")
     if isinstance(movie, str):
         return movie
@@ -752,8 +903,8 @@ def radarr_delete_movie_file(movie_id: int) -> str:
         )
         r.raise_for_status()
         return f"✅ Deleted file for '{movie['title']}' (file id: {fid}). Movie is now marked as missing."
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("radarr", error)
 
 
 @mcp.tool()
@@ -765,6 +916,8 @@ def radarr_update_movie(movie_id: int, quality_profile_id: int = -1, monitored: 
         quality_profile_id: New quality profile ID (-1 to keep current).
         monitored: Set to 1 to monitor, 0 to unmonitor (-1 to keep current).
     """
+    if movie_id <= 0:
+        return "Invalid movie_id."
     movie = _radarr(f"/movie/{movie_id}")
     if isinstance(movie, str):
         return movie
@@ -836,11 +989,12 @@ def prowlarr_test_indexer(indexer_id: int) -> str:
     Args:
         indexer_id: The indexer ID (use prowlarr_list_indexers to find it).
     """
-    try:
-        _prowlarr(f"/indexer/{indexer_id}/test", method="POST")
-        return "✅ Indexer test passed."
-    except httpx.HTTPStatusError as e:
-        return f"❌ Indexer test failed: {e.response.status_code} — {e.response.text[:200]}"
+    if indexer_id <= 0:
+        return "Invalid indexer_id."
+    result = _prowlarr(f"/indexer/{indexer_id}/test", method="POST")
+    if isinstance(result, str) and result.startswith("prowlarr request"):
+        return f"❌ Indexer test failed: {result}"
+    return "✅ Indexer test passed."
 
 
 @mcp.tool()
@@ -853,11 +1007,11 @@ def prowlarr_test_all_indexers() -> str:
     for idx in data:
         if not idx.get("enable"):
             continue
-        try:
-            _prowlarr(f"/indexer/{idx['id']}/test", method="POST")
+        result = _prowlarr(f"/indexer/{idx['id']}/test", method="POST")
+        if isinstance(result, str) and result.startswith("prowlarr request"):
+            results.append(f"❌ {idx['name']} — {result}")
+        else:
             results.append(f"✅ {idx['name']} — OK")
-        except httpx.HTTPStatusError as e:
-            results.append(f"❌ {idx['name']} — {e.response.status_code}")
     return "\n".join(results) or "No enabled indexers."
 
 
@@ -875,10 +1029,10 @@ def prowlarr_search(query: str, indexer_ids: str = "") -> str:
         indexer_ids: Comma-separated indexer IDs to search (empty = all).
     """
     global _prowlarr_search_cache
-    params = f"/search?query={query}&type=search"
+    params = {"query": query, "type": "search"}
     if indexer_ids:
-        params += f"&indexerIds={indexer_ids}"
-    data = _prowlarr(params)
+        params["indexerIds"] = indexer_ids
+    data = _prowlarr("/search", params=params)
     if isinstance(data, str):
         return data
     _prowlarr_search_cache = data[:25]
@@ -950,7 +1104,7 @@ def prowlarr_grab(index: int) -> str:
         )
         if upload.status_code == 403:
             _qbt_sid = None
-            return prowlarr_grab(index)
+            return "❌ qBittorrent authentication failed while uploading the torrent."
         return f"✅ Downloaded and sent to qBittorrent: {title}"
     except Exception as e:
         return f"❌ Failed to grab release: {e}"
@@ -983,7 +1137,7 @@ def qbt_list_torrents(filter: str = "all") -> str:
     Args:
         filter: Filter torrents — "all", "downloading", "seeding", "completed", "paused", "active", "stalled".
     """
-    data = _qbt(f"/torrents/info?filter={filter}")
+    data = _qbt("/torrents/info", params={"filter": filter})
     if isinstance(data, str):
         return data
     lines = []
@@ -1011,7 +1165,7 @@ def qbt_torrent_details(torrent_hash: str) -> str:
     Args:
         torrent_hash: The info hash of the torrent.
     """
-    props = _qbt(f"/torrents/properties?hash={torrent_hash}")
+    props = _qbt("/torrents/properties", params={"hash": torrent_hash})
     if isinstance(props, str):
         return props
     lines = [
@@ -1123,7 +1277,7 @@ def jellyfin_recent(limit: int = 10) -> str:
         limit: Number of items to return (default: 10, max: 50).
     """
     limit = min(limit, 50)
-    data = _jellyfin(f"/Items/Latest?Limit={limit}&EnableImages=false")
+    data = _jellyfin("/Items/Latest", params={"Limit": limit, "EnableImages": "false"})
     if isinstance(data, str):
         return data
     lines = []
@@ -1168,15 +1322,196 @@ def jellyfin_scan_library() -> str:
         )
         r.raise_for_status()
         return "✅ Library scan triggered."
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error("jellyfin", error)
+
+
+# ════════════════════════════════════════════════════════════════
+#  RomM Tools
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def romm_system_info() -> str:
+    """Show the RomM version, detected library platforms, and enabled metadata sources."""
+    data = _romm("/api/heartbeat", public=True)
+    if isinstance(data, str):
+        return data
+    sources = data.get("METADATA_SOURCES", {})
+    enabled_sources = [
+        name.removesuffix("_API_ENABLED")
+        for name, enabled in sources.items()
+        if name.endswith("_API_ENABLED") and enabled
+    ]
+    platforms = data.get("FILESYSTEM", {}).get("FS_PLATFORMS", [])
+    return "\n".join(
+        [
+            f"Version: {data.get('SYSTEM', {}).get('VERSION', '?')}",
+            f"Library platforms: {', '.join(platforms) or 'none'}",
+            f"Metadata sources: {', '.join(enabled_sources) or 'none'}",
+        ]
+    )
+
+
+@mcp.tool()
+def romm_list_platforms() -> str:
+    """List RomM platforms with their IDs, ROM counts, and library sizes."""
+    data = _romm("/api/platforms")
+    if isinstance(data, str):
+        return data
+    lines = [
+        (
+            f"• [{platform.get('id', '?')}] {platform.get('display_name') or platform.get('name', '?')} "
+            f"({platform.get('fs_slug', '?')}) — {platform.get('rom_count', 0)} ROMs, "
+            f"{_format_size(platform.get('fs_size_bytes'))}"
+        )
+        for platform in data
+    ]
+    return "\n".join(lines) or "No RomM platforms found."
+
+
+@mcp.tool()
+def romm_list_games(search: str = "", platform_id: int = 0, limit: int = 25) -> str:
+    """List or search games already indexed in RomM.
+
+    Args:
+        search: Optional game-title search term.
+        platform_id: Optional RomM platform ID from romm_list_platforms.
+        limit: Number of games to return (default: 25, max: 100).
+    """
+    params = {
+        "limit": max(1, min(limit, 100)),
+        "with_char_index": False,
+        "with_filter_values": False,
+    }
+    if search:
+        params["search_term"] = search
+    if platform_id > 0:
+        params["platform_ids"] = platform_id
+    data = _romm("/api/roms", params=params)
+    if isinstance(data, str):
+        return data
+    games = data.get("items", [])
+    lines = [
+        (
+            f"• [{game.get('id', '?')}] {game.get('name') or game.get('fs_name_no_ext', '?')} "
+            f"[{game.get('platform_display_name') or game.get('platform_fs_slug', '?')}] — "
+            f"{_format_size(game.get('fs_size_bytes'))}"
+        )
+        for game in games
+    ]
+    summary = f"Showing {len(games)} of {data.get('total', len(games))} RomM games."
+    return "\n".join([summary, *lines])
+
+
+@mcp.tool()
+def romm_get_game(game_id: int) -> str:
+    """Get details for a RomM game by its internal ID."""
+    if game_id < 1:
+        return "RomM game ID must be at least 1."
+    game = _romm(f"/api/roms/{game_id}")
+    if isinstance(game, str):
+        return game
+    summary = (game.get("summary") or "No summary.").replace("\n", " ")
+    if len(summary) > 500:
+        summary = f"{summary[:497]}..."
+    return "\n".join(
+        [
+            f"Title: {game.get('name') or game.get('fs_name_no_ext', '?')}",
+            f"ID: {game.get('id', '?')}",
+            f"Platform: {game.get('platform_display_name') or game.get('platform_fs_slug', '?')}",
+            f"File: {game.get('fs_name', '?')} ({_format_size(game.get('fs_size_bytes'))})",
+            f"Regions: {', '.join(game.get('regions', [])) or 'unknown'}",
+            f"Languages: {', '.join(game.get('languages', [])) or 'unknown'}",
+            f"Summary: {summary}",
+        ]
+    )
+
+
+# ════════════════════════════════════════════════════════════════
+#  GameVault Tools
+# ════════════════════════════════════════════════════════════════
+
+
+def _format_gamevault_game(game: dict) -> str:
+    metadata = game.get("metadata") or {}
+    title = metadata.get("title") or game.get("title", "?")
+    game_type = game.get("type", "?").replace("_", " ").title()
+    return (
+        f"• [{game.get('id', '?')}] {title} [{game_type}] — "
+        f"{_format_size(game.get('size'))}"
+    )
+
+
+@mcp.tool()
+def gamevault_list_games(search: str = "", page: int = 1, limit: int = 25) -> str:
+    """List or search PC games and installers indexed by GameVault.
+
+    Args:
+        search: Optional game-title search term.
+        page: Results page (default: 1).
+        limit: Number of games to return (default: 25, max: 100).
+    """
+    params = {"page": max(1, page), "limit": max(1, min(limit, 100))}
+    if search:
+        params["search"] = search
+    data = _gamevault("/api/games", params=params)
+    if isinstance(data, str):
+        return data
+    games = data.get("data", [])
+    meta = data.get("meta", {})
+    summary = f"Showing {len(games)} of {meta.get('totalItems', len(games))} GameVault games."
+    return "\n".join([summary, *[_format_gamevault_game(game) for game in games]])
+
+
+@mcp.tool()
+def gamevault_get_game(game_id: int) -> str:
+    """Get details for a GameVault game by its internal ID."""
+    if game_id < 1:
+        return "GameVault game ID must be at least 1."
+    game = _gamevault(f"/api/games/{game_id}")
+    if isinstance(game, str):
+        return game
+    metadata = game.get("metadata") or {}
+    description = (metadata.get("description") or "No description.").replace("\n", " ")
+    if len(description) > 500:
+        description = f"{description[:497]}..."
+    return "\n".join(
+        [
+            f"Title: {metadata.get('title') or game.get('title', '?')}",
+            f"ID: {game.get('id', '?')}",
+            f"Type: {game.get('type', '?').replace('_', ' ').title()}",
+            f"Version: {game.get('version') or 'unknown'}",
+            f"File: {game.get('file_path', '?')} ({_format_size(game.get('size'))})",
+            f"Downloads: {game.get('download_count', 0)}",
+            f"Description: {description}",
+        ]
+    )
+
+
+@mcp.tool()
+def gamevault_random_game() -> str:
+    """Pick a random game from GameVault."""
+    game = _gamevault("/api/games/random")
+    if isinstance(game, str):
+        return game
+    return _format_gamevault_game(game)
+
+
+@mcp.tool()
+def gamevault_reindex() -> str:
+    """Tell GameVault to scan its game-files directory for new or changed installers."""
+    data = _gamevault("/api/games/reindex", method="PUT")
+    if isinstance(data, str):
+        return data
+    return f"GameVault reindex complete. Indexed {len(data)} games."
 
 
 # ── Entrypoint ──
 
 def main():
     parser = argparse.ArgumentParser(
-        description="arrstack-mcp — MCP server for Sonarr, Radarr, qBittorrent & Jellyfin"
+        description="arrstack-mcp — MCP server for media and game library services"
     )
     parser.add_argument(
         "--transport",
@@ -1199,11 +1534,15 @@ def main():
         enabled.append("qBittorrent")
     if JELLYFIN_URL:
         enabled.append("Jellyfin")
+    if ROMM_URL:
+        enabled.append("RomM")
+    if GAMEVAULT_URL:
+        enabled.append("GameVault")
 
     if not enabled:
         print(
             "⚠️  No services configured. Set at least one of: "
-            "SONARR_URL, RADARR_URL, QBT_URL, JELLYFIN_URL",
+            "SONARR_URL, RADARR_URL, QBT_URL, JELLYFIN_URL, ROMM_URL, GAMEVAULT_URL",
             file=sys.stderr,
         )
         sys.exit(1)
