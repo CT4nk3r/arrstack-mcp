@@ -21,6 +21,15 @@ services:
       # ── Prowlarr ──
       - PROWLARR_URL=http://prowlarr:9696
       - PROWLARR_API_KEY=your-prowlarr-api-key
+      # ── RomM ──
+      - ROMM_URL=http://romm:8080
+      - ROMM_API_TOKEN=your-romm-api-token
+      # ── GameVault ──
+      - GAMEVAULT_URL=http://gamevault-backend:8080
+      - GAMEVAULT_API_KEY=your-gamevault-api-key
+      # ── MCP Server Security ──
+      - MCP_ALLOWED_HOSTS=localhost:*,127.0.0.1:*,arrstack-mcp:*
+      - LOG_LEVEL=INFO
     restart: unless-stopped
     # Put this on the same Docker network as your *arr stack:
     # networks:

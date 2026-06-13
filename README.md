@@ -1,6 +1,6 @@
 # 🎬 arrstack-mcp
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants control over your **Sonarr**, **Radarr**, **Prowlarr**, **qBittorrent**, and **Jellyfin** homelab media stack.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants control over your **Sonarr**, **Radarr**, **Prowlarr**, **qBittorrent**, **Jellyfin**, **RomM**, and **GameVault** homelab media and game libraries.
 
 Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, and any other MCP-compatible client.
 
@@ -17,6 +17,8 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 | **Prowlarr** | List/test indexers, search releases, health check |
 | **qBittorrent** | List/pause/resume/delete torrents, add magnets, transfer stats |
 | **Jellyfin** | List libraries, recent additions, system info |
+| **RomM** | System info, list platforms, list/search ROMs, game details |
+| **GameVault** | List/search PC games, game details, random game, reindex library |
 
 Only configure the services you use — unconfigured services are gracefully skipped.
 
@@ -120,6 +122,14 @@ All configuration is done via environment variables:
 | `JELLYFIN_API_KEY` | No | Jellyfin API key (optional, for authenticated endpoints) |
 | `PROWLARR_URL` | No | Prowlarr base URL (e.g. `http://localhost:9696`) |
 | `PROWLARR_API_KEY` | If Prowlarr | Prowlarr API key (Settings → General) |
+| `ROMM_URL` | No | RomM base URL (e.g. `http://localhost:8081`) |
+| `ROMM_API_TOKEN` | If RomM | RomM bearer token; alternatively use `ROMM_USER` and `ROMM_PASS` |
+| `ROMM_USER` | If RomM basic auth | RomM username |
+| `ROMM_PASS` | If RomM basic auth | RomM password |
+| `GAMEVAULT_URL` | No | GameVault server URL (e.g. `http://localhost:8082`) |
+| `GAMEVAULT_API_KEY` | If GameVault | GameVault API key |
+| `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
+| `LOG_LEVEL` | No | Request logging level (default: `INFO`; credentials are never logged) |
 
 ## Available Tools
 
@@ -174,6 +184,24 @@ All configuration is done via environment variables:
 | `jellyfin_recent` | Recently added items |
 | `jellyfin_system_info` | Server version and system info |
 
+### RomM (ROM Library)
+
+| Tool | Description |
+|------|-------------|
+| `romm_system_info` | Show version, detected platforms, and metadata sources |
+| `romm_list_platforms` | List platforms, ROM counts, and library sizes |
+| `romm_list_games` | List or search indexed ROMs |
+| `romm_get_game` | Show details for one indexed ROM |
+
+### GameVault (PC Game Library)
+
+| Tool | Description |
+|------|-------------|
+| `gamevault_list_games` | List or search PC games and installers |
+| `gamevault_get_game` | Show details for one game |
+| `gamevault_random_game` | Pick a random indexed game |
+| `gamevault_reindex` | Scan the game-files directory for changes |
+
 ## Transport Options
 
 ```bash
@@ -194,6 +222,23 @@ python server.py --transport sse --port 8000
 - **Prowlarr**: Settings → General → API Key
 - **qBittorrent**: Settings → Web UI → Authentication
 - **Jellyfin**: Dashboard → API Keys → Add
+- **RomM**: User profile → API Tokens, or configure `ROMM_USER` and `ROMM_PASS`
+- **GameVault**: Admin panel → API Keys
+
+## Security
+
+The HTTP/SSE transports listen on `0.0.0.0:8000` by default, and MCP does not
+provide authentication by itself. Anyone who can reach that port can invoke
+tools using the configured service credentials.
+
+- Prefer stdio for same-machine clients.
+- For remote access, restrict port `8000` to Tailscale or place it behind an
+  authenticated reverse proxy.
+- DNS-rebinding protection is enabled. Set `MCP_ALLOWED_HOSTS` to the exact
+  hostnames or IP addresses clients use, with optional wildcard ports:
+  `localhost:*,127.0.0.1:*,arrstack-mcp:*,100.64.0.1:*`.
+- The Docker image runs as non-root user `appuser` with UID `1000`.
+- API keys and request headers are never logged.
 
 ## License
 
