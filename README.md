@@ -16,7 +16,7 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 | **Radarr** | List movies, search & add movies, download queue |
 | **Lidarr** | List artists, search & add artists/albums, queue, missing search |
 | **Prowlarr** | List/test indexers, search releases, health check |
-| **qBittorrent** | List/pause/resume/delete torrents, add magnets, transfer stats |
+| **qBittorrent** | List/pause/resume/delete torrents, add magnets / .torrent files / URLs, transfer stats |
 | **SABnzbd** | Queue, history, status, pause/resume, add NZB url, speed limit |
 | **RDTClient** | Real-Debrid downloader: list/pause/resume/delete torrents, add magnets, provider status |
 | **Jellyfin** | List libraries, recent additions, system info |
@@ -216,7 +216,9 @@ All configuration is done via environment variables:
 |------|-------------|
 | `qbt_list_torrents` | List torrents with progress and speed |
 | `qbt_torrent_details` | Get detailed torrent info |
-| `qbt_add_magnet` | Add a magnet link |
+| `qbt_add` | Add anything — magnet, .torrent URL, local .torrent path, or base64 — and start it |
+| `qbt_add_magnet` | Add a magnet link (optional category / save path / paused) |
+| `qbt_add_torrent_file` | Add a .torrent from a local path, http(s) URL, or base64 content |
 | `qbt_pause` | Pause a torrent |
 | `qbt_resume` | Resume a torrent |
 | `qbt_delete` | Delete a torrent (optionally with files) |
