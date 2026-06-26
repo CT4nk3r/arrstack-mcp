@@ -156,6 +156,10 @@ All configuration is done via environment variables:
 | `GAMEVAULT_API_KEY` | If GameVault | GameVault API key |
 | `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
 | `LOG_LEVEL` | No | Request logging level (default: `INFO`; credentials are never logged) |
+| `ARD_ENABLED` | No | Agentic Resource Discovery publishing: `auto` (default; on for HTTP transports), `true`, or `false` |
+| `ARD_PUBLIC_URL` | For ARD | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); enables absolute discovery links and a `did:web` identity |
+| `ARD_DOMAIN` | No | Publisher domain for the `urn:air` / `did:web` identity (defaults to the host of `ARD_PUBLIC_URL`, else `localhost`) |
+| `ARD_HOST_NAME` | No | Human-readable catalog host name (default: `arrstack-mcp`) |
 | `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
 | `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
@@ -315,6 +319,62 @@ python server.py --transport streamable-http --port 8000
 # SSE — legacy HTTP transport
 python server.py --transport sse --port 8000
 ```
+
+## Agentic Resource Discovery (ARD)
+
+arrstack-mcp implements [Agentic Resource Discovery](https://agenticresourcediscovery.org/)
+([spec](https://github.com/ards-project/ard-spec)) — an open standard for
+publishing, discovering, and verifying AI capabilities across the web. This lets
+ARD registries and agents find your server and learn how to connect to it,
+instead of every client needing a hand-written config.
+
+When running an HTTP transport, the server publishes two documents, generated
+live from whatever `ENABLED_SERVICES` advertises:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/.well-known/ai-catalog.json` | The ARD **capability manifest**. Advertises this server as a single `application/mcp-server-card+json` entry with `capabilities` (the enabled tool names), `representativeQueries` for semantic search, and a `did:web` identity. |
+| `/.well-known/mcp-server-card.json` | The **MCP server card** the catalog references: every advertised tool with its `inputSchema`, plus the MCP endpoint and transport. |
+
+Both are served with `Content-Type: application/json` and
+`Access-Control-Allow-Origin: *` so crawlers can fetch them from any origin.
+
+### Publishing
+
+1. Set `ARD_PUBLIC_URL` to the URL clients reach this server at, e.g.
+   `https://arrstack.example.com`. The catalog then advertises absolute links and
+   a verifiable `did:web:<domain>` identity derived from it (override the domain
+   with `ARD_DOMAIN`).
+2. Serve it over **HTTPS** on your public domain (a reverse proxy / Tailscale
+   Funnel / Cloudflare Tunnel in front of port `8000`).
+3. Verify discovery works:
+
+   ```bash
+   curl https://arrstack.example.com/.well-known/ai-catalog.json
+   ```
+
+Startup logs print the discovery URL when ARD is enabled. Set `ARD_ENABLED=false`
+to turn the endpoints off.
+
+### Static hosting
+
+If you'd rather host the manifest as a static file (GitHub Pages, S3, a CDN),
+generate it and upload it to `/.well-known/ai-catalog.json` on your domain:
+
+```bash
+ARD_PUBLIC_URL=https://arrstack.example.com python server.py --print-catalog > ai-catalog.json
+ARD_PUBLIC_URL=https://arrstack.example.com python server.py --print-server-card > mcp-server-card.json
+```
+
+When `ARD_PUBLIC_URL` is unset, `--print-catalog` embeds the full server card
+inline (`data`) so the manifest is self-contained. If you can't host at the
+`.well-known` path, point a DNS `TXT` record at the file instead:
+
+```
+_catalog._agents.<your-domain>   TXT   "url=https://<bucket>/ai-catalog.json"
+```
+
+See [`examples/`](examples/) for sample output.
 
 ## Finding Your API Keys
 

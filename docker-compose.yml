@@ -38,6 +38,11 @@ services:
       # ── MCP Server Security ──
       - MCP_ALLOWED_HOSTS=localhost:*,127.0.0.1:*,arrstack-mcp:*
       - LOG_LEVEL=INFO
+      # ── Agentic Resource Discovery (ARD) ──
+      # Set ARD_PUBLIC_URL to the public URL clients reach this server at so it
+      # publishes a discoverable catalog at /.well-known/ai-catalog.json.
+      - ARD_ENABLED=auto
+      - ARD_PUBLIC_URL=            # e.g. https://arrstack.example.com
       # ── SABnzbd ──
       - SAB_URL=http://sabnzbd:8080
       - SAB_API_KEY=your-sabnzbd-api-key

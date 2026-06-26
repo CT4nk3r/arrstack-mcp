@@ -1,0 +1,1461 @@
+{
+  "name": "arrstack",
+  "description": "Configurable MCP server exposing homelab media and game services (Sonarr, Radarr, Lidarr, Prowlarr, qBittorrent, RDTClient, SABnzbd, Jellyfin, RomM, GameVault, Bookshelf) as tools for AI assistants to search, add, and manage media and game libraries.",
+  "instructions": "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), RomM (ROM library), and GameVault (PC game library). Use these tools to search, add, and manage media and game libraries.\n\n## Hungarian (HuN) / nCore workflow\nnCore is a Hungarian private tracker with dual-audio (HuN) releases. When the user wants Hungarian releases:\n1. Make sure movies/series are on the correct Hungarian quality profile (use radarr_list_movies / sonarr_list_series \u2014 they show profile names and IDs).\n2. IMPORTANT: Dual-audio releases are 2\u20133\u00d7 larger than English-only at the same quality tier because they carry two full audio tracks. The default 1080p max size (~83 MB/min) is too low \u2014 raise Bluray-1080p, Remux-1080p, WEBDL-1080p, WEBRip-1080p, and HDTV-1080p max to at least 400 MB/min with radarr_set_quality_definition / sonarr_set_quality_definition.\n3. After triggering a search, always check the queue to verify releases contain 'HuN' or 'HUN' in the filename. If Radarr/Sonarr grabbed an English-only release, delete it from the queue (blocklist=true) and re-search.\n4. If existing files need replacing (e.g. English \u2192 HuN), delete the movie file with radarr_delete_movie_file / sonarr_delete_episode_file first, then search.\n",
+  "url": "https://arrstack.example.com/mcp",
+  "transport": "streamable-http",
+  "tools": [
+    {
+      "name": "bookshelf_get_author",
+      "description": "Get detailed info about a specific author by their Bookshelf ID.",
+      "inputSchema": {
+        "properties": {
+          "author_id": {
+            "title": "Author Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "author_id"
+        ],
+        "title": "bookshelf_get_authorArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_health",
+      "description": "Check Bookshelf health: returns app version, build, and any active health issues.",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_healthArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_list_authors",
+      "description": "List all authors in Bookshelf with monitoring status, book counts, and disk usage.",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_list_authorsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_list_books",
+      "description": "List all books currently tracked in Bookshelf (title, author, monitored, page count).",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_list_booksArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_list_metadata_profiles",
+      "description": "List all metadata profiles in Bookshelf (controls which release types/secondary types are tracked).",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_list_metadata_profilesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_list_quality_profiles",
+      "description": "List all quality profiles configured in Bookshelf with their allowed qualities.",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_list_quality_profilesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_list_root_folders",
+      "description": "List all configured root folders in Bookshelf with free space.",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_list_root_foldersArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_queue",
+      "description": "Show the current Bookshelf download queue with status and queue IDs.",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_queueArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_search_author",
+      "description": "Search Bookshelf's metadata source (Hardcover) for an author. Returns name and Hardcover ID.",
+      "inputSchema": {
+        "properties": {
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "title": "bookshelf_search_authorArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_search_book",
+      "description": "Search Bookshelf's metadata source (Hardcover) for a book. Returns title, author, and IDs.",
+      "inputSchema": {
+        "properties": {
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "title": "bookshelf_search_bookArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_search_missing",
+      "description": "Trigger Bookshelf to search for all missing monitored books.",
+      "inputSchema": {
+        "properties": {},
+        "title": "bookshelf_search_missingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "bookshelf_wanted_missing",
+      "description": "List books Bookshelf has flagged as missing (monitored but no file). Paged; default 20.",
+      "inputSchema": {
+        "properties": {
+          "page_size": {
+            "default": 20,
+            "title": "Page Size",
+            "type": "integer"
+          }
+        },
+        "title": "bookshelf_wanted_missingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gamevault_get_game",
+      "description": "Get details for a GameVault game by its internal ID.",
+      "inputSchema": {
+        "properties": {
+          "game_id": {
+            "title": "Game Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "game_id"
+        ],
+        "title": "gamevault_get_gameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gamevault_list_games",
+      "description": "List or search PC games and installers indexed by GameVault.\n\nArgs:\n    search: Optional game-title search term.\n    page: Results page (default: 1).\n    limit: Number of games to return (default: 25, max: 100).",
+      "inputSchema": {
+        "properties": {
+          "search": {
+            "default": "",
+            "title": "Search",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "title": "Page",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 25,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "gamevault_list_gamesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gamevault_random_game",
+      "description": "Pick a random game from GameVault.",
+      "inputSchema": {
+        "properties": {},
+        "title": "gamevault_random_gameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gamevault_reindex",
+      "description": "Tell GameVault to scan its game-files directory for new or changed installers.",
+      "inputSchema": {
+        "properties": {},
+        "title": "gamevault_reindexArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "jellyfin_libraries",
+      "description": "List all Jellyfin media libraries with their types and paths.",
+      "inputSchema": {
+        "properties": {},
+        "title": "jellyfin_librariesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "jellyfin_recent",
+      "description": "Show recently added items in Jellyfin.\n\nArgs:\n    limit: Number of items to return (default: 10, max: 50).",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "default": 10,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "jellyfin_recentArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "jellyfin_scan_library",
+      "description": "Trigger a library scan in Jellyfin to detect new, changed, or removed media files.\nRequires JELLYFIN_API_KEY to be set.",
+      "inputSchema": {
+        "properties": {},
+        "title": "jellyfin_scan_libraryArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "jellyfin_system_info",
+      "description": "Get Jellyfin server system information (version, OS, etc.).",
+      "inputSchema": {
+        "properties": {},
+        "title": "jellyfin_system_infoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_add_artist",
+      "description": "Add an artist to Lidarr by name. Use lidarr_search to find the artist first.\n\nArgs:\n    artist_name: Artist name to look up and add.\n    quality_profile_id: Quality profile (use lidarr_list_quality_profiles).\n    metadata_profile_id: Metadata profile (use lidarr_list_metadata_profiles).\n    root_folder_path: Root folder path (use lidarr_list_root_folders).\n    monitored: Whether to monitor the artist (default: True).",
+      "inputSchema": {
+        "properties": {
+          "artist_name": {
+            "title": "Artist Name",
+            "type": "string"
+          },
+          "quality_profile_id": {
+            "title": "Quality Profile Id",
+            "type": "integer"
+          },
+          "metadata_profile_id": {
+            "title": "Metadata Profile Id",
+            "type": "integer"
+          },
+          "root_folder_path": {
+            "title": "Root Folder Path",
+            "type": "string"
+          },
+          "monitored": {
+            "default": true,
+            "title": "Monitored",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "artist_name",
+          "quality_profile_id",
+          "metadata_profile_id",
+          "root_folder_path"
+        ],
+        "title": "lidarr_add_artistArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_delete_queue_item",
+      "description": "Remove an item from the Lidarr download queue.\n\nArgs:\n    queue_id: Queue item ID (use lidarr_queue to find it).\n    blocklist: If True, adds the release to the blocklist so it won't be grabbed again.",
+      "inputSchema": {
+        "properties": {
+          "queue_id": {
+            "title": "Queue Id",
+            "type": "integer"
+          },
+          "blocklist": {
+            "default": true,
+            "title": "Blocklist",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "queue_id"
+        ],
+        "title": "lidarr_delete_queue_itemArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_get_artist",
+      "description": "Get detailed info about a specific artist by their Lidarr ID.",
+      "inputSchema": {
+        "properties": {
+          "artist_id": {
+            "title": "Artist Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artist_id"
+        ],
+        "title": "lidarr_get_artistArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_list_artists",
+      "description": "List all artists in Lidarr with monitoring status, album counts, and disk usage.",
+      "inputSchema": {
+        "properties": {},
+        "title": "lidarr_list_artistsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_list_metadata_profiles",
+      "description": "List all metadata profiles in Lidarr (controls which release types/secondary types are tracked).",
+      "inputSchema": {
+        "properties": {},
+        "title": "lidarr_list_metadata_profilesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_list_quality_profiles",
+      "description": "List all quality profiles in Lidarr with their allowed qualities.",
+      "inputSchema": {
+        "properties": {},
+        "title": "lidarr_list_quality_profilesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_list_root_folders",
+      "description": "List all configured root folders in Lidarr with free space.",
+      "inputSchema": {
+        "properties": {},
+        "title": "lidarr_list_root_foldersArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_queue",
+      "description": "Show the current Lidarr download queue with status and queue IDs for each item.",
+      "inputSchema": {
+        "properties": {},
+        "title": "lidarr_queueArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_search",
+      "description": "Search for an artist to add to Lidarr. Returns artist name and MusicBrainz ID.",
+      "inputSchema": {
+        "properties": {
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "title": "lidarr_searchArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_search_album",
+      "description": "Search for an album in Lidarr's metadata source. Returns album title, artist, and MusicBrainz ID.",
+      "inputSchema": {
+        "properties": {
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "title": "lidarr_search_albumArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "lidarr_search_missing",
+      "description": "Trigger a search for all missing albums in Lidarr.",
+      "inputSchema": {
+        "properties": {},
+        "title": "lidarr_search_missingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "prowlarr_grab",
+      "description": "Grab a release from the most recent prowlarr_search results and send it to the download client (qBittorrent).\n\nRun prowlarr_search first, then use the [index] number from those results here.\n\nArgs:\n    index: The result number from prowlarr_search (e.g. 0 for the first result).",
+      "inputSchema": {
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index"
+        ],
+        "title": "prowlarr_grabArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "prowlarr_health",
+      "description": "Check Prowlarr system health for warnings and errors.",
+      "inputSchema": {
+        "properties": {},
+        "title": "prowlarr_healthArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "prowlarr_list_indexers",
+      "description": "List all configured indexers in Prowlarr with their status and priority.",
+      "inputSchema": {
+        "properties": {},
+        "title": "prowlarr_list_indexersArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "prowlarr_search",
+      "description": "Search across Prowlarr indexers for releases.\n\nReturns numbered results with guid for use with prowlarr_grab.\n\nArgs:\n    query: Search term.\n    indexer_ids: Comma-separated indexer IDs to search (empty = all).",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "indexer_ids": {
+            "default": "",
+            "title": "Indexer Ids",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "prowlarr_searchArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "prowlarr_test_all_indexers",
+      "description": "Test all enabled indexers in Prowlarr and report their status.",
+      "inputSchema": {
+        "properties": {},
+        "title": "prowlarr_test_all_indexersArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "prowlarr_test_indexer",
+      "description": "Test an indexer connection in Prowlarr. Use this to reset a failing indexer.\n\nArgs:\n    indexer_id: The indexer ID (use prowlarr_list_indexers to find it).",
+      "inputSchema": {
+        "properties": {
+          "indexer_id": {
+            "title": "Indexer Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indexer_id"
+        ],
+        "title": "prowlarr_test_indexerArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_add",
+      "description": "Add anything to qBittorrent and start downloading immediately.\n\nThis is the one-shot \"just download it\" tool. Hand it a `source` and it\nauto-detects what it is:\n  \u2022 a magnet link (magnet:?xt=urn:btih:...)\n  \u2022 an http(s):// URL pointing to a .torrent file\n  \u2022 a path to a local .torrent file on the server\n  \u2022 base64-encoded .torrent file contents (optionally a data: URI)\n\nArgs:\n    source: A magnet link, .torrent URL, local .torrent path, or base64 torrent data.\n    category: Optional qBittorrent category to assign (e.g. \"tv\", \"movies\").\n    save_path: Optional download directory; defaults to the category/global path.\n    paused: If True, add the torrent without starting it.",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "category": {
+            "default": "",
+            "title": "Category",
+            "type": "string"
+          },
+          "save_path": {
+            "default": "",
+            "title": "Save Path",
+            "type": "string"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "qbt_addArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_add_magnet",
+      "description": "Add a magnet link to qBittorrent.\n\nFor .torrent files or URLs, use qbt_add_torrent_file (or qbt_add, which\naccepts any source).\n\nArgs:\n    magnet_url: The magnet URI to add (must start with \"magnet:\").\n    category: Optional category to assign (e.g. \"tv\", \"movies\").\n    save_path: Optional download directory; defaults to the category/global path.\n    paused: If True, add the torrent without starting it.",
+      "inputSchema": {
+        "properties": {
+          "magnet_url": {
+            "title": "Magnet Url",
+            "type": "string"
+          },
+          "category": {
+            "default": "",
+            "title": "Category",
+            "type": "string"
+          },
+          "save_path": {
+            "default": "",
+            "title": "Save Path",
+            "type": "string"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "magnet_url"
+        ],
+        "title": "qbt_add_magnetArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_add_torrent_file",
+      "description": "Add a .torrent file to qBittorrent.\n\n`source` may be a local file path on the server, an http(s):// URL to a\n.torrent file (downloaded and uploaded for you), or base64-encoded .torrent\ncontents. For magnet links use qbt_add_magnet (or qbt_add for anything).\n\nArgs:\n    source: Local .torrent path, .torrent URL, or base64 torrent data.\n    category: Optional category to assign (e.g. \"tv\", \"movies\").\n    save_path: Optional download directory; defaults to the category/global path.\n    paused: If True, add the torrent without starting it.",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "category": {
+            "default": "",
+            "title": "Category",
+            "type": "string"
+          },
+          "save_path": {
+            "default": "",
+            "title": "Save Path",
+            "type": "string"
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "qbt_add_torrent_fileArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_delete",
+      "description": "Delete a torrent from qBittorrent.\n\nArgs:\n    torrent_hash: Hash of the torrent to delete.\n    delete_files: If True, also delete downloaded files from disk.",
+      "inputSchema": {
+        "properties": {
+          "torrent_hash": {
+            "title": "Torrent Hash",
+            "type": "string"
+          },
+          "delete_files": {
+            "default": false,
+            "title": "Delete Files",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "torrent_hash"
+        ],
+        "title": "qbt_deleteArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_list_torrents",
+      "description": "List torrents in qBittorrent.\n\nArgs:\n    filter: Filter torrents \u2014 \"all\", \"downloading\", \"seeding\", \"completed\", \"paused\", \"active\", \"stalled\".",
+      "inputSchema": {
+        "properties": {
+          "filter": {
+            "default": "all",
+            "title": "Filter",
+            "type": "string"
+          }
+        },
+        "title": "qbt_list_torrentsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_pause",
+      "description": "Pause a torrent. Use 'all' to pause everything.\n\nArgs:\n    torrent_hash: Hash of the torrent, or \"all\" to pause all.",
+      "inputSchema": {
+        "properties": {
+          "torrent_hash": {
+            "title": "Torrent Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "torrent_hash"
+        ],
+        "title": "qbt_pauseArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_resume",
+      "description": "Resume a torrent. Use 'all' to resume everything.\n\nArgs:\n    torrent_hash: Hash of the torrent, or \"all\" to resume all.",
+      "inputSchema": {
+        "properties": {
+          "torrent_hash": {
+            "title": "Torrent Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "torrent_hash"
+        ],
+        "title": "qbt_resumeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_torrent_details",
+      "description": "Get detailed info about a specific torrent by its hash.\n\nArgs:\n    torrent_hash: The info hash of the torrent.",
+      "inputSchema": {
+        "properties": {
+          "torrent_hash": {
+            "title": "Torrent Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "torrent_hash"
+        ],
+        "title": "qbt_torrent_detailsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "qbt_transfer_info",
+      "description": "Get global qBittorrent transfer statistics (speeds, totals, connection status).",
+      "inputSchema": {
+        "properties": {},
+        "title": "qbt_transfer_infoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_add_movie",
+      "description": "Add a movie to Radarr by its TMDB ID. Use radarr_search to find the TMDB ID first.\n\nArgs:\n    tmdb_id: The TMDB ID of the movie.\n    quality_profile_id: Quality profile to use (default: 1).",
+      "inputSchema": {
+        "properties": {
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "quality_profile_id": {
+            "default": 1,
+            "title": "Quality Profile Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tmdb_id"
+        ],
+        "title": "radarr_add_movieArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_delete_movie_file",
+      "description": "Delete the downloaded file for a movie, marking it as missing in Radarr.\nThis allows Radarr to re-search and download a new version.\n\nArgs:\n    movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).",
+      "inputSchema": {
+        "properties": {
+          "movie_id": {
+            "title": "Movie Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "movie_id"
+        ],
+        "title": "radarr_delete_movie_fileArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_delete_queue_item",
+      "description": "Remove an item from the Radarr download queue.\n\nArgs:\n    queue_id: Queue item ID (use radarr_queue to find it).\n    blocklist: If True, adds the release to the blocklist so it won't be grabbed again.",
+      "inputSchema": {
+        "properties": {
+          "queue_id": {
+            "title": "Queue Id",
+            "type": "integer"
+          },
+          "blocklist": {
+            "default": true,
+            "title": "Blocklist",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "queue_id"
+        ],
+        "title": "radarr_delete_queue_itemArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_get_movie",
+      "description": "Get detailed info about a specific movie by its Radarr ID.",
+      "inputSchema": {
+        "properties": {
+          "movie_id": {
+            "title": "Movie Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "movie_id"
+        ],
+        "title": "radarr_get_movieArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_get_quality_definitions",
+      "description": "Get quality size limits (min/max MB per minute) for each quality tier in Radarr.\nThese limits control what file sizes Radarr will accept for downloads.",
+      "inputSchema": {
+        "properties": {},
+        "title": "radarr_get_quality_definitionsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_list_custom_formats",
+      "description": "List all custom formats in Radarr with their specifications.",
+      "inputSchema": {
+        "properties": {},
+        "title": "radarr_list_custom_formatsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_list_movies",
+      "description": "List all movies in Radarr with download status and disk usage.",
+      "inputSchema": {
+        "properties": {},
+        "title": "radarr_list_moviesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_list_quality_profiles",
+      "description": "List all quality profiles in Radarr with their allowed qualities.",
+      "inputSchema": {
+        "properties": {},
+        "title": "radarr_list_quality_profilesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_queue",
+      "description": "Show the current Radarr download queue with status and queue IDs for each item.",
+      "inputSchema": {
+        "properties": {},
+        "title": "radarr_queueArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_search",
+      "description": "Search for a movie to add to Radarr. Returns title, year, TMDB ID, and overview.",
+      "inputSchema": {
+        "properties": {
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "title": "radarr_searchArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_search_missing",
+      "description": "Trigger a search for missing movies in Radarr.\n\nArgs:\n    movie_ids: Comma-separated Radarr movie IDs to search. Leave empty to search ALL missing movies.",
+      "inputSchema": {
+        "properties": {
+          "movie_ids": {
+            "default": "",
+            "title": "Movie Ids",
+            "type": "string"
+          }
+        },
+        "title": "radarr_search_missingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_set_quality_definition",
+      "description": "Set the min/preferred/max file size (in MB per minute of runtime) for a Radarr quality tier.\n\nUse radarr_get_quality_definitions to see current values and quality IDs.\nFor a ~2hr movie, 40 MB/min \u2248 5 GB, 85 MB/min \u2248 10 GB.\nSet to 0 for unlimited (max/preferred only). Pass -1 to leave unchanged.\n\nArgs:\n    quality_id: Quality ID from radarr_get_quality_definitions.\n    min_size: Minimum MB per minute (-1 to keep current).\n    preferred_size: Preferred MB per minute (-1 to keep current, 0 for unlimited).\n    max_size: Maximum MB per minute (-1 to keep current, 0 for unlimited).",
+      "inputSchema": {
+        "properties": {
+          "quality_id": {
+            "title": "Quality Id",
+            "type": "integer"
+          },
+          "min_size": {
+            "default": -1,
+            "title": "Min Size",
+            "type": "number"
+          },
+          "preferred_size": {
+            "default": -1,
+            "title": "Preferred Size",
+            "type": "number"
+          },
+          "max_size": {
+            "default": -1,
+            "title": "Max Size",
+            "type": "number"
+          }
+        },
+        "required": [
+          "quality_id"
+        ],
+        "title": "radarr_set_quality_definitionArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "radarr_update_movie",
+      "description": "Update settings for a movie in Radarr (quality profile, monitored status, etc.).\n\nArgs:\n    movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).\n    quality_profile_id: New quality profile ID (-1 to keep current).\n    monitored: Set to 1 to monitor, 0 to unmonitor (-1 to keep current).",
+      "inputSchema": {
+        "properties": {
+          "movie_id": {
+            "title": "Movie Id",
+            "type": "integer"
+          },
+          "quality_profile_id": {
+            "default": -1,
+            "title": "Quality Profile Id",
+            "type": "integer"
+          },
+          "monitored": {
+            "default": -1,
+            "title": "Monitored",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "movie_id"
+        ],
+        "title": "radarr_update_movieArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_add_magnet",
+      "description": "Add a magnet link to RDTClient (which sends it to your debrid provider).\n\nArgs:\n    magnet: The magnet URI to add.\n    category: Optional category to assign (e.g. \"tv\", \"movies\").",
+      "inputSchema": {
+        "properties": {
+          "magnet": {
+            "title": "Magnet",
+            "type": "string"
+          },
+          "category": {
+            "default": "",
+            "title": "Category",
+            "type": "string"
+          }
+        },
+        "required": [
+          "magnet"
+        ],
+        "title": "rdt_add_magnetArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_delete",
+      "description": "Delete one or more RDTClient torrents. Pipe-separate hashes, or use 'all'.\n\nArgs:\n    torrent_hashes: Hash, \"hash1|hash2\", or \"all\".\n    delete_files: If True, also delete downloaded files from disk.",
+      "inputSchema": {
+        "properties": {
+          "torrent_hashes": {
+            "title": "Torrent Hashes",
+            "type": "string"
+          },
+          "delete_files": {
+            "default": false,
+            "title": "Delete Files",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "torrent_hashes"
+        ],
+        "title": "rdt_deleteArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_list_torrents",
+      "description": "List torrents in RDTClient.\n\nArgs:\n    filter: Filter \u2014 \"all\", \"downloading\", \"seeding\", \"completed\", \"paused\", \"active\", \"stalled\".",
+      "inputSchema": {
+        "properties": {
+          "filter": {
+            "default": "all",
+            "title": "Filter",
+            "type": "string"
+          }
+        },
+        "title": "rdt_list_torrentsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_pause",
+      "description": "Pause one or more RDTClient torrents. Pipe-separate hashes, or use 'all'.\n\nArgs:\n    torrent_hashes: Hash, \"hash1|hash2\", or \"all\".",
+      "inputSchema": {
+        "properties": {
+          "torrent_hashes": {
+            "title": "Torrent Hashes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "torrent_hashes"
+        ],
+        "title": "rdt_pauseArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_provider_status",
+      "description": "Show Real-Debrid / AllDebrid / Premiumize provider status from RDTClient.\n\nReads from RDTClient's native /api/Settings endpoint to surface the configured\ndebrid provider. Requires the same auth as the qBT-compat API; if your\nRDTClient install requires login, set RDT_USER/RDT_PASS.",
+      "inputSchema": {
+        "properties": {},
+        "title": "rdt_provider_statusArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_resume",
+      "description": "Resume one or more RDTClient torrents. Pipe-separate hashes, or use 'all'.\n\nArgs:\n    torrent_hashes: Hash, \"hash1|hash2\", or \"all\".",
+      "inputSchema": {
+        "properties": {
+          "torrent_hashes": {
+            "title": "Torrent Hashes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "torrent_hashes"
+        ],
+        "title": "rdt_resumeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "rdt_torrent_details",
+      "description": "Get detailed info about a specific RDTClient torrent by its hash.\n\nArgs:\n    torrent_hash: The info hash of the torrent.",
+      "inputSchema": {
+        "properties": {
+          "torrent_hash": {
+            "title": "Torrent Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "torrent_hash"
+        ],
+        "title": "rdt_torrent_detailsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "romm_get_game",
+      "description": "Get details for a RomM game by its internal ID.",
+      "inputSchema": {
+        "properties": {
+          "game_id": {
+            "title": "Game Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "game_id"
+        ],
+        "title": "romm_get_gameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "romm_list_games",
+      "description": "List or search games already indexed in RomM.\n\nArgs:\n    search: Optional game-title search term.\n    platform_id: Optional RomM platform ID from romm_list_platforms.\n    limit: Number of games to return (default: 25, max: 100).",
+      "inputSchema": {
+        "properties": {
+          "search": {
+            "default": "",
+            "title": "Search",
+            "type": "string"
+          },
+          "platform_id": {
+            "default": 0,
+            "title": "Platform Id",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 25,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "romm_list_gamesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "romm_list_platforms",
+      "description": "List RomM platforms with their IDs, ROM counts, and library sizes.",
+      "inputSchema": {
+        "properties": {},
+        "title": "romm_list_platformsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "romm_system_info",
+      "description": "Show the RomM version, detected library platforms, and enabled metadata sources.",
+      "inputSchema": {
+        "properties": {},
+        "title": "romm_system_infoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_add_url",
+      "description": "Add an NZB by URL to SABnzbd.\n\nArgs:\n    nzb_url: URL pointing at an NZB file.\n    category: Optional SAB category (default: empty = default category).\n    priority: SABnzbd priority (-100 = default, -2..2 supported).",
+      "inputSchema": {
+        "properties": {
+          "nzb_url": {
+            "title": "Nzb Url",
+            "type": "string"
+          },
+          "category": {
+            "default": "",
+            "title": "Category",
+            "type": "string"
+          },
+          "priority": {
+            "default": -100,
+            "title": "Priority",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nzb_url"
+        ],
+        "title": "sab_add_urlArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_delete_job",
+      "description": "Delete a job from the SABnzbd queue.\n\nArgs:\n    nzo_id: The NZO id of the queue item.\n    delete_files: If True, also delete any files already downloaded.",
+      "inputSchema": {
+        "properties": {
+          "nzo_id": {
+            "title": "Nzo Id",
+            "type": "string"
+          },
+          "delete_files": {
+            "default": false,
+            "title": "Delete Files",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "nzo_id"
+        ],
+        "title": "sab_delete_jobArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_history",
+      "description": "Show SABnzbd download history.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sab_historyArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_pause",
+      "description": "Pause the entire SABnzbd queue.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sab_pauseArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_pause_job",
+      "description": "Pause a specific SABnzbd queue item.\n\nArgs:\n    nzo_id: The NZO id of the queue item (use sab_queue to find it).",
+      "inputSchema": {
+        "properties": {
+          "nzo_id": {
+            "title": "Nzo Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nzo_id"
+        ],
+        "title": "sab_pause_jobArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_queue",
+      "description": "Show the current SABnzbd download queue.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sab_queueArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_resume",
+      "description": "Resume the entire SABnzbd queue.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sab_resumeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_resume_job",
+      "description": "Resume a specific SABnzbd queue item.\n\nArgs:\n    nzo_id: The NZO id of the queue item.",
+      "inputSchema": {
+        "properties": {
+          "nzo_id": {
+            "title": "Nzo Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nzo_id"
+        ],
+        "title": "sab_resume_jobArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_speed_limit",
+      "description": "Set the SABnzbd global speed limit as a percentage of the configured max.\n\nArgs:\n    percent: Speed-limit percentage, 0..100 (0 = pause-by-throttle, 100 = full speed).",
+      "inputSchema": {
+        "properties": {
+          "percent": {
+            "title": "Percent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "percent"
+        ],
+        "title": "sab_speed_limitArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sab_status",
+      "description": "Show SABnzbd full status (server, disk space, speed, etc.).",
+      "inputSchema": {
+        "properties": {},
+        "title": "sab_statusArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_add_series",
+      "description": "Add a TV series to Sonarr by its TVDB ID. Use sonarr_search to find the TVDB ID first.\n\nArgs:\n    tvdb_id: The TVDB ID of the series.\n    quality_profile_id: Quality profile to use (default: 1).\n    monitor: Episodes to monitor \u2014 \"all\", \"future\", \"missing\", \"pilot\", \"none\".",
+      "inputSchema": {
+        "properties": {
+          "tvdb_id": {
+            "title": "Tvdb Id",
+            "type": "integer"
+          },
+          "quality_profile_id": {
+            "default": 1,
+            "title": "Quality Profile Id",
+            "type": "integer"
+          },
+          "monitor": {
+            "default": "all",
+            "title": "Monitor",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tvdb_id"
+        ],
+        "title": "sonarr_add_seriesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_delete_episode_file",
+      "description": "Delete a downloaded episode file, marking it as missing in Sonarr.\nThis allows Sonarr to re-search and download a new version.\n\nArgs:\n    episode_file_id: Episode file ID (use sonarr_get_series to find file IDs).",
+      "inputSchema": {
+        "properties": {
+          "episode_file_id": {
+            "title": "Episode File Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "episode_file_id"
+        ],
+        "title": "sonarr_delete_episode_fileArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_delete_queue_item",
+      "description": "Remove an item from the Sonarr download queue.\n\nArgs:\n    queue_id: Queue item ID (use sonarr_queue to find it).\n    blocklist: If True, adds the release to the blocklist so it won't be grabbed again.",
+      "inputSchema": {
+        "properties": {
+          "queue_id": {
+            "title": "Queue Id",
+            "type": "integer"
+          },
+          "blocklist": {
+            "default": true,
+            "title": "Blocklist",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "queue_id"
+        ],
+        "title": "sonarr_delete_queue_itemArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_get_quality_definitions",
+      "description": "Get quality size limits (min/max MB per minute) for each quality tier in Sonarr.\nThese limits control what file sizes Sonarr will accept for downloads.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sonarr_get_quality_definitionsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_get_series",
+      "description": "Get detailed info about a specific TV series by its Sonarr ID.",
+      "inputSchema": {
+        "properties": {
+          "series_id": {
+            "title": "Series Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "series_id"
+        ],
+        "title": "sonarr_get_seriesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_list_custom_formats",
+      "description": "List all custom formats in Sonarr with their specifications.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sonarr_list_custom_formatsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_list_quality_profiles",
+      "description": "List all quality profiles in Sonarr with their allowed qualities.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sonarr_list_quality_profilesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_list_series",
+      "description": "List all TV series in Sonarr with monitoring status, episode counts, and disk usage.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sonarr_list_seriesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_queue",
+      "description": "Show the current Sonarr download queue with status and queue IDs for each item.",
+      "inputSchema": {
+        "properties": {},
+        "title": "sonarr_queueArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_search",
+      "description": "Search for a TV series to add to Sonarr. Returns title, year, TVDB ID, and overview.",
+      "inputSchema": {
+        "properties": {
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "title": "sonarr_searchArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_search_missing",
+      "description": "Trigger a search for missing episodes in Sonarr.\n\nArgs:\n    series_id: Sonarr series ID to search. Set to 0 to search ALL series with missing episodes.",
+      "inputSchema": {
+        "properties": {
+          "series_id": {
+            "default": 0,
+            "title": "Series Id",
+            "type": "integer"
+          }
+        },
+        "title": "sonarr_search_missingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_set_quality_definition",
+      "description": "Set the min/preferred/max file size (in MB per minute of runtime) for a Sonarr quality tier.\n\nUse sonarr_get_quality_definitions to see current values and quality IDs.\nFor a ~45min episode, 5 MB/min \u2248 225 MB, 10 MB/min \u2248 450 MB.\nSet to 0 for unlimited (max/preferred only). Pass -1 to leave unchanged.\n\nArgs:\n    quality_id: Quality ID from sonarr_get_quality_definitions.\n    min_size: Minimum MB per minute (-1 to keep current).\n    preferred_size: Preferred MB per minute (-1 to keep current, 0 for unlimited).\n    max_size: Maximum MB per minute (-1 to keep current, 0 for unlimited).",
+      "inputSchema": {
+        "properties": {
+          "quality_id": {
+            "title": "Quality Id",
+            "type": "integer"
+          },
+          "min_size": {
+            "default": -1,
+            "title": "Min Size",
+            "type": "number"
+          },
+          "preferred_size": {
+            "default": -1,
+            "title": "Preferred Size",
+            "type": "number"
+          },
+          "max_size": {
+            "default": -1,
+            "title": "Max Size",
+            "type": "number"
+          }
+        },
+        "required": [
+          "quality_id"
+        ],
+        "title": "sonarr_set_quality_definitionArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_upcoming",
+      "description": "Show upcoming TV episodes within the next N days.\n\nArgs:\n    days: Number of days to look ahead (default: 7).",
+      "inputSchema": {
+        "properties": {
+          "days": {
+            "default": 7,
+            "title": "Days",
+            "type": "integer"
+          }
+        },
+        "title": "sonarr_upcomingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sonarr_update_series",
+      "description": "Update settings for a series in Sonarr (quality profile, monitored status, etc.).\n\nArgs:\n    series_id: Sonarr series ID (use sonarr_list_series or sonarr_get_series to find it).\n    quality_profile_id: New quality profile ID (-1 to keep current).\n    monitored: Set to 1 to monitor, 0 to unmonitor (-1 to keep current).",
+      "inputSchema": {
+        "properties": {
+          "series_id": {
+            "title": "Series Id",
+            "type": "integer"
+          },
+          "quality_profile_id": {
+            "default": -1,
+            "title": "Quality Profile Id",
+            "type": "integer"
+          },
+          "monitored": {
+            "default": -1,
+            "title": "Monitored",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "series_id"
+        ],
+        "title": "sonarr_update_seriesArguments",
+        "type": "object"
+      }
+    }
+  ]
+}

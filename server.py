@@ -13,11 +13,15 @@ import base64
 import argparse
 import logging
 import binascii
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.responses import JSONResponse, Response
+
+import ard
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -61,6 +65,20 @@ SAB_API_KEY = os.environ.get("SAB_API_KEY", "")
 BOOKSHELF_URL = os.environ.get("BOOKSHELF_URL", "").rstrip("/")
 BOOKSHELF_API_KEY = os.environ.get("BOOKSHELF_API_KEY", "")
 ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
+
+# ── Agentic Resource Discovery (ARD) ──
+# Publish this MCP server to ARD registries/crawlers. See ard.py and README.
+# ARD_ENABLED:    auto (default, serve on HTTP transports) | true | false
+# ARD_PUBLIC_URL: public base URL clients reach this server at, e.g.
+#                 https://arrstack.example.com — enables absolute card/endpoint
+#                 links and a verifiable did:web identity.
+# ARD_DOMAIN:     publisher domain for the urn:air / did:web identity (defaults
+#                 to the host of ARD_PUBLIC_URL, else "localhost").
+# ARD_HOST_NAME:  human-readable catalog host name.
+ARD_ENABLED = os.environ.get("ARD_ENABLED", "auto").strip().lower()
+ARD_PUBLIC_URL = os.environ.get("ARD_PUBLIC_URL", "").strip()
+ARD_DOMAIN = os.environ.get("ARD_DOMAIN", "").strip()
+ARD_HOST_NAME = os.environ.get("ARD_HOST_NAME", "").strip() or ard.DEFAULT_HOST_NAME
 
 SERVICE_CONFIG = {
     "sonarr": ("Sonarr", SONARR_URL, "sonarr_"),
@@ -110,6 +128,86 @@ mcp = FastMCP(
         allowed_hosts=MCP_ALLOWED_HOSTS,
     ),
 )
+
+# ── Agentic Resource Discovery (ARD) endpoints ──
+# The catalog and server card are generated from the *enabled* tool set at
+# request time, so they always mirror what this server advertises. Crawlers
+# fetch these from any Host, so the routes set permissive CORS headers.
+
+# HTTP transport this process is serving (set in main()); shapes the absolute
+# MCP endpoint URL advertised in the catalog/server card.
+_active_transport = ard.DEFAULT_TRANSPORT
+
+_ARD_DISABLED_VALUES = {"false", "0", "no", "off", "disabled"}
+_ARD_RESPONSE_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "public, max-age=300",
+}
+
+
+def _ard_disabled() -> bool:
+    """Whether ARD publishing has been explicitly turned off."""
+    return ARD_ENABLED in _ARD_DISABLED_VALUES
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _build_ard_catalog(updated_at: str | None = None) -> dict:
+    """Assemble the ai-catalog.json manifest from the live server config."""
+    return ard.build_catalog(
+        mcp,
+        enabled_services=_selected_services(),
+        service_config=SERVICE_CONFIG,
+        public_url=ARD_PUBLIC_URL or None,
+        domain=ARD_DOMAIN or None,
+        host_name=ARD_HOST_NAME,
+        transport=_active_transport,
+        updated_at=updated_at,
+    )
+
+
+def _build_ard_server_card() -> dict:
+    """Assemble the MCP server card from the live server config."""
+    return ard.build_server_card(
+        mcp,
+        enabled_services=_selected_services(),
+        service_config=SERVICE_CONFIG,
+        public_url=ARD_PUBLIC_URL or None,
+        transport=_active_transport,
+    )
+
+
+def _emit_ard_document(server_card: bool = False) -> None:
+    """Print an ARD document to stdout for static hosting; exit non-zero if invalid."""
+    if server_card:
+        print(json.dumps(_build_ard_server_card(), indent=2))
+        return
+    catalog = _build_ard_catalog(updated_at=_now_iso())
+    problems = ard.validate_catalog(catalog)
+    if problems:
+        for problem in problems:
+            print(f"⚠️  ARD catalog invalid: {problem}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(catalog, indent=2))
+
+
+@mcp.custom_route(ard.WELL_KNOWN_CATALOG_PATH, methods=["GET"])
+async def _serve_ai_catalog(request):
+    """Serve the ARD capability manifest (ai-catalog.json) for discovery."""
+    if _ard_disabled():
+        return Response(status_code=404)
+    return JSONResponse(_build_ard_catalog(updated_at=_now_iso()), headers=_ARD_RESPONSE_HEADERS)
+
+
+@mcp.custom_route(ard.WELL_KNOWN_SERVER_CARD_PATH, methods=["GET"])
+async def _serve_mcp_server_card(request):
+    """Serve the MCP server card referenced by the catalog entry."""
+    if _ard_disabled():
+        return Response(status_code=404)
+    return JSONResponse(_build_ard_server_card(), headers=_ARD_RESPONSE_HEADERS)
+
 
 # ── HTTP helpers ──
 
@@ -2711,6 +2809,7 @@ def bookshelf_search_missing() -> str:
 # ── Entrypoint ──
 
 def main():
+    global _active_transport
     parser = argparse.ArgumentParser(
         description="arrstack-mcp — MCP server for media and game library services"
     )
@@ -2732,7 +2831,21 @@ def main():
         action="store_true",
         help="Interactively generate an ENABLED_SERVICES setting, then exit",
     )
+    parser.add_argument(
+        "--print-catalog",
+        action="store_true",
+        help="Print the ARD ai-catalog.json manifest to stdout, then exit "
+        "(for static hosting at /.well-known/ai-catalog.json)",
+    )
+    parser.add_argument(
+        "--print-server-card",
+        action="store_true",
+        help="Print the ARD MCP server card to stdout, then exit",
+    )
     args = parser.parse_args()
+
+    if args.transport in ("streamable-http", "sse"):
+        _active_transport = args.transport
 
     try:
         if args.list_services:
@@ -2740,6 +2853,10 @@ def main():
             return
         if args.setup:
             _run_setup()
+            return
+        if args.print_catalog or args.print_server_card:
+            _configure_service_tools()
+            _emit_ard_document(server_card=args.print_server_card)
             return
         selected = _configure_service_tools()
     except ValueError as error:
@@ -2758,6 +2875,12 @@ def main():
     print(f"🎬 arrstack-mcp starting ({', '.join(enabled_names)})", file=sys.stderr)
     print(f"   Advertised tools: {tool_count}", file=sys.stderr)
     print(f"   Transport: {args.transport}", file=sys.stderr)
+    if args.transport in ("streamable-http", "sse") and not _ard_disabled():
+        discovery_base = ard.normalize_public_url(ARD_PUBLIC_URL) or f"http://{args.host}:{args.port}"
+        print(
+            f"   ARD discovery: {discovery_base}{ard.WELL_KNOWN_CATALOG_PATH}",
+            file=sys.stderr,
+        )
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")
