@@ -1569,6 +1569,11 @@ def prowlarr_health() -> str:
 # .torrent URL, a local .torrent path, or base64 torrent data — into a single
 # qBittorrent /torrents/add call. The public tools are thin wrappers over them.
 
+# Sanity ceiling for a remote .torrent download. Real torrent files are at most
+# a few MB even for very large multi-file releases; anything bigger is a wrong
+# URL (an HTML page, a media file, …), so we refuse it with a clear message.
+MAX_TORRENT_BYTES = 25 * 1024 * 1024
+
 
 def _qbt_add_options(category="", save_path="", paused=False):
     """Build the optional form fields shared by every /torrents/add call."""
@@ -1595,6 +1600,8 @@ def _qbt_add_result(result):
             return True, ""
         if text.lower() == "fails.":
             return False, "qBittorrent rejected it (duplicate or invalid torrent)."
+        if not text:
+            return False, "qBittorrent returned an empty response."
         # _qbt returns plain-text error messages (not configured, HTTP errors, …).
         return False, text
     return False, str(result)
@@ -1621,11 +1628,17 @@ def _qbt_add_file(filename, content, category="", save_path="", paused=False):
 
 
 def _looks_like_torrent(content):
-    """Cheap sanity check that bytes are a bencoded .torrent file."""
+    """Cheap sanity check that bytes are a bencoded .torrent file.
+
+    A valid torrent is a bencoded dict (starts with ``d``) with a mandatory
+    top-level ``info`` key (bencoded as ``4:info``). ``announce`` is optional
+    (trackerless/DHT torrents omit it). Scan a generous prefix so the ``info``
+    key is found even after a large ``announce-list``.
+    """
     if not content or content[:1] != b"d":
         return False
-    head = content[:2048]
-    return b"announce" in head or b"info" in head
+    head = content[:65536]
+    return b"4:info" in head or b"announce" in head
 
 
 def _decode_b64_torrent(text):
@@ -1662,28 +1675,63 @@ def _magnet_display_name(magnet):
     return "magnet link"
 
 
+def _redact_url(url):
+    """Return ``host/path`` for a URL, dropping the query string and userinfo.
+
+    Tracker / Prowlarr download links routinely carry apikey/passkey/token in
+    the query string, so raw URLs (and httpx error strings that embed them) must
+    never be echoed back through tool output or logs.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "the provided URL"
+    cleaned = f"{parsed.hostname or ''}{parsed.path or ''}".strip()
+    if parsed.query:
+        cleaned += "?…"
+    return cleaned or "the provided URL"
+
+
+def _filename_from_disposition(disposition):
+    """Best-effort filename from a Content-Disposition header (RFC 5987 aware)."""
+    params = {}
+    for part in disposition.split(";")[1:]:
+        key, sep, value = part.partition("=")
+        if sep:
+            params[key.strip().lower()] = value.strip()
+    if params.get("filename*"):
+        # e.g. filename*=UTF-8''My%20Release.torrent
+        value = params["filename*"].split("''", 1)[-1]
+        return unquote(value).strip('"').strip("'")
+    return params.get("filename", "").strip('"').strip("'")
+
+
 def _qbt_fetch_torrent(url):
     """Download a remote .torrent.
 
     Returns ("file", (name, bytes)), ("magnet", uri) when the URL resolves to a
-    magnet link, or ("error", message).
+    magnet link, or ("error", message). URLs are redacted in error messages
+    because tracker/Prowlarr download links often embed apikey/passkey tokens.
     """
     try:
         r = httpx.get(url, timeout=30, follow_redirects=True)
         r.raise_for_status()
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return "error", f"Could not download torrent from URL: {error}"
+    except httpx.HTTPStatusError as error:
+        return "error", f"Could not download torrent (HTTP {error.response.status_code}) from {_redact_url(url)}."
+    except httpx.RequestError as error:
+        return "error", f"Could not download torrent from {_redact_url(url)} ({type(error).__name__})."
     content = r.content or b""
+    if len(content) > MAX_TORRENT_BYTES:
+        size_mb = len(content) // (1024 * 1024)
+        return "error", f"{_redact_url(url)} returned {size_mb} MB — too large to be a .torrent file."
     if content[:7].lower() == b"magnet:":
         return "magnet", content.strip().decode("utf-8", "ignore")
     if not _looks_like_torrent(content):
-        return "error", "The URL did not return a valid .torrent file."
+        return "error", f"{_redact_url(url)} did not return a valid .torrent file."
     name = _filename_from_url(url)
-    disposition = r.headers.get("content-disposition", "")
-    if "filename=" in disposition:
-        fn = disposition.split("filename=", 1)[1].strip().strip('"').strip("'")
-        if fn:
-            name = fn if fn.lower().endswith(".torrent") else f"{fn}.torrent"
+    fn = _filename_from_disposition(r.headers.get("content-disposition", ""))
+    if fn:
+        name = fn if fn.lower().endswith(".torrent") else f"{fn}.torrent"
     return "file", (name, content)
 
 
