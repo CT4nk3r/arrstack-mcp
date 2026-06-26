@@ -1826,11 +1826,12 @@ def qbt_add_magnet(magnet_url: str, category: str = "", save_path: str = "", pau
     """
     if not magnet_url.strip().lower().startswith("magnet:"):
         return "❌ That doesn't look like a magnet link (it must start with 'magnet:'). Use qbt_add for files or URLs."
-    ok, detail = _qbt_add_url(magnet_url.strip(), category, save_path, paused)
+    magnet = magnet_url.strip()
+    ok, detail = _qbt_add_url(magnet, category, save_path, paused)
     if ok:
         cat = f" → {category}" if category else ""
         state = " (added stopped)" if paused else ""
-        return f"✅ Magnet added to qBittorrent{cat}{state}: {_magnet_display_name(magnet_url)}"
+        return f"✅ Magnet added to qBittorrent{cat}{state}: {_magnet_display_name(magnet)}"
     return f"❌ Failed to add magnet: {detail}"
 
 
