@@ -214,5 +214,157 @@ class QbtTransportTests(unittest.TestCase):
         self.assertEqual(out, "Ok.")
 
 
+class MagnetDisplayNameTests(unittest.TestCase):
+    def test_falls_back_to_btih_hash(self):
+        name = server._magnet_display_name("magnet:?xt=urn:btih:DEADBEEFCAFEBABE0000")
+        self.assertIn("DEADBEEFCAFEBABE", name)
+
+    def test_falls_back_to_generic_label(self):
+        self.assertEqual(server._magnet_display_name("magnet:?tr=udp://x"), "magnet link")
+
+
+class DecodeBase64EdgeTests(unittest.TestCase):
+    def test_whitespace_and_newlines_are_ignored(self):
+        encoded = base64.b64encode(TORRENT_BYTES).decode()
+        wrapped = "\n".join(encoded[i : i + 8] for i in range(0, len(encoded), 8))
+        self.assertEqual(server._decode_b64_torrent(f"  {wrapped}\n"), TORRENT_BYTES)
+
+    def test_too_short_returns_none(self):
+        self.assertIsNone(server._decode_b64_torrent("abc="))
+
+
+class AddResultNormalizationTests(unittest.TestCase):
+    def test_ok_is_success(self):
+        self.assertEqual(server._qbt_add_result("Ok."), (True, ""))
+
+    def test_ok_is_case_insensitive(self):
+        ok, _ = server._qbt_add_result("ok.")
+        self.assertTrue(ok)
+
+    def test_fails_is_reported(self):
+        ok, detail = server._qbt_add_result("Fails.")
+        self.assertFalse(ok)
+        self.assertIn("rejected", detail.lower())
+
+    def test_plain_error_text_passes_through(self):
+        ok, detail = server._qbt_add_result("qBittorrent is not configured.")
+        self.assertFalse(ok)
+        self.assertEqual(detail, "qBittorrent is not configured.")
+
+    def test_non_string_result_is_failure(self):
+        ok, detail = server._qbt_add_result({"unexpected": True})
+        self.assertFalse(ok)
+
+
+class FetchTorrentTests(unittest.TestCase):
+    @patch("server.httpx.get")
+    def test_uses_content_disposition_filename(self, get):
+        get.return_value = http_response(
+            content=TORRENT_BYTES,
+            headers={"content-disposition": 'attachment; filename="Cool.Release.torrent"'},
+        )
+        kind, value = server._qbt_fetch_torrent("https://host/dl?id=9")
+        self.assertEqual(kind, "file")
+        self.assertEqual(value[0], "Cool.Release.torrent")
+        self.assertEqual(value[1], TORRENT_BYTES)
+
+    @patch("server.httpx.get")
+    def test_appends_torrent_extension_to_disposition_name(self, get):
+        get.return_value = http_response(
+            content=TORRENT_BYTES,
+            headers={"content-disposition": "attachment; filename=release"},
+        )
+        _, value = server._qbt_fetch_torrent("https://host/dl")
+        self.assertTrue(value[0].endswith(".torrent"))
+
+    @patch("server.httpx.get")
+    def test_html_body_is_rejected(self, get):
+        get.return_value = http_response(content=b"<html>login required</html>")
+        kind, message = server._qbt_fetch_torrent("https://host/dl")
+        self.assertEqual(kind, "error")
+        self.assertIn("valid .torrent", message)
+
+    @patch("server.httpx.get")
+    def test_http_status_error_is_reported(self, get):
+        resp = http_response()
+        resp.raise_for_status.side_effect = server.httpx.HTTPStatusError(
+            "403", request=Mock(), response=Mock()
+        )
+        get.return_value = resp
+        kind, message = server._qbt_fetch_torrent("https://host/dl")
+        self.assertEqual(kind, "error")
+        self.assertIn("download", message.lower())
+
+
+class ResolveSourceTests(unittest.TestCase):
+    def test_magnet_is_detected(self):
+        self.assertEqual(server._qbt_resolve_source(f"  {MAGNET}  "), ("magnet", MAGNET))
+
+    def test_existing_non_torrent_file_is_rejected(self):
+        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as handle:
+            handle.write(b"not a torrent at all")
+            path = handle.name
+        try:
+            kind, message = server._qbt_resolve_source(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(kind, "error")
+        self.assertIn("not a valid", message)
+
+    def test_unreadable_garbage_is_rejected(self):
+        kind, message = server._qbt_resolve_source("/no/such/path/file.torrent")
+        self.assertEqual(kind, "error")
+        self.assertIn("Unrecognized", message)
+
+
+class TorrentFileSourceVariantTests(unittest.TestCase):
+    @patch("server._qbt")
+    def test_accepts_base64_content(self, qbt):
+        qbt.return_value = "Ok."
+        encoded = base64.b64encode(TORRENT_BYTES).decode()
+
+        out = server.qbt_add_torrent_file(encoded)
+
+        _, kwargs = qbt.call_args
+        self.assertEqual(kwargs["files"]["torrents"][1], TORRENT_BYTES)
+        self.assertIn("✅", out)
+
+    @patch("server._qbt")
+    @patch("server.httpx.get")
+    def test_accepts_http_url(self, get, qbt):
+        get.return_value = http_response(content=TORRENT_BYTES)
+        qbt.return_value = "Ok."
+
+        out = server.qbt_add_torrent_file("https://tracker.example/file.torrent")
+
+        get.assert_called_once()
+        _, kwargs = qbt.call_args
+        self.assertEqual(kwargs["files"]["torrents"][1], TORRENT_BYTES)
+        self.assertIn("✅", out)
+
+
+class SuccessMessageTests(unittest.TestCase):
+    @patch("server._qbt")
+    def test_category_appears_in_message(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_add(MAGNET, category="movies")
+        self.assertIn("→ movies", out)
+
+    @patch("server._qbt")
+    def test_add_magnet_reports_category_and_stopped(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_add_magnet(MAGNET, category="tv", paused=True)
+        self.assertIn("→ tv", out)
+        self.assertIn("stopped", out)
+        self.assertIn("Cool.Release.1080p", out)
+
+    @patch("server._qbt")
+    def test_not_configured_message_surfaces(self, qbt):
+        qbt.return_value = "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
+        out = server.qbt_add(MAGNET)
+        self.assertIn("❌", out)
+        self.assertIn("not configured", out)
+
+
 if __name__ == "__main__":
     unittest.main()
