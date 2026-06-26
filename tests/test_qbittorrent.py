@@ -11,13 +11,20 @@ TORRENT_BYTES = b"d8:announce15:http://x/announce4:infod6:lengthi1e4:name4:teste
 MAGNET = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Cool.Release.1080p"
 
 
-def http_response(content=b"", headers=None, status_code=200):
+def http_response(content=b"", headers=None, status_code=200, is_redirect=False):
     resp = Mock()
     resp.content = content
     resp.headers = headers or {}
     resp.status_code = status_code
+    resp.is_redirect = is_redirect
     resp.raise_for_status.return_value = None
     return resp
+
+
+def redirect_response(location, status_code=302):
+    return http_response(
+        headers={"location": location}, status_code=status_code, is_redirect=True
+    )
 
 
 class TorrentDetectionTests(unittest.TestCase):
@@ -303,13 +310,61 @@ class FetchTorrentTests(unittest.TestCase):
         self.assertIn("download", message.lower())
         self.assertIn("403", message)
 
+    @patch("server.httpx.get")
+    def test_redirect_to_magnet_is_captured(self, get):
+        magnet = "magnet:?xt=urn:btih:DEADBEEF&dn=Redirected"
+        get.return_value = redirect_response(magnet)
+        kind, value = server._qbt_fetch_torrent("https://host/dl?token=secret")
+        self.assertEqual(kind, "magnet")
+        self.assertEqual(value, magnet)
+
+    @patch("server.httpx.get")
+    def test_redirect_chain_to_torrent_is_followed(self, get):
+        get.side_effect = [
+            redirect_response("https://cdn.host/real.torrent"),
+            http_response(content=TORRENT_BYTES),
+        ]
+        kind, value = server._qbt_fetch_torrent("https://host/dl")
+        self.assertEqual(kind, "file")
+        self.assertEqual(value[1], TORRENT_BYTES)
+        self.assertTrue(value[0].endswith(".torrent"))
+
+    @patch("server.httpx.get")
+    def test_relative_redirect_is_resolved(self, get):
+        get.side_effect = [
+            redirect_response("/files/x.torrent"),
+            http_response(content=TORRENT_BYTES),
+        ]
+        server._qbt_fetch_torrent("https://host/dl")
+        # Second hop must target the absolute, host-resolved URL.
+        second_url = get.call_args_list[1].args[0]
+        self.assertEqual(second_url, "https://host/files/x.torrent")
+
+    @patch("server.httpx.get")
+    def test_redirect_loop_is_bounded(self, get):
+        get.return_value = redirect_response("https://host/again")
+        kind, message = server._qbt_fetch_torrent("https://host/dl?token=secret")
+        self.assertEqual(kind, "error")
+        self.assertIn("redirect", message.lower())
+        self.assertNotIn("secret", message)
+        self.assertLessEqual(get.call_count, server.MAX_TORRENT_REDIRECTS + 1)
+
 
 class UrlRedactionTests(unittest.TestCase):
     def test_redact_strips_query_and_userinfo(self):
         redacted = server._redact_url("https://user:pass@tracker.example/dl?apikey=SECRET&passkey=PRIV")
-        self.assertIn("tracker.example/dl", redacted)
-        for leak in ("SECRET", "PRIV", "apikey", "passkey", "user", "pass"):
+        self.assertIn("tracker.example", redacted)
+        for leak in ("SECRET", "PRIV", "apikey", "passkey", "user", "pass", "/dl"):
             self.assertNotIn(leak, redacted)
+
+    def test_redact_strips_path_embedded_passkey(self):
+        redacted = server._redact_url("https://tracker.example/rss/download/PASSKEY123/9999.torrent")
+        self.assertIn("tracker.example", redacted)
+        self.assertNotIn("PASSKEY123", redacted)
+        self.assertNotIn("9999", redacted)
+
+    def test_redact_bare_host_has_no_marker(self):
+        self.assertEqual(server._redact_url("https://tracker.example"), "tracker.example")
 
     @patch("server.httpx.get")
     def test_fetch_error_does_not_leak_token(self, get):

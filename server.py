@@ -13,7 +13,7 @@ import base64
 import argparse
 import logging
 import binascii
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -1573,6 +1573,9 @@ def prowlarr_health() -> str:
 # a few MB even for very large multi-file releases; anything bigger is a wrong
 # URL (an HTML page, a media file, …), so we refuse it with a clear message.
 MAX_TORRENT_BYTES = 25 * 1024 * 1024
+# Bound on redirect hops when fetching a remote .torrent (we follow them by hand
+# so a redirect to a magnet: URI is captured rather than crashing httpx).
+MAX_TORRENT_REDIRECTS = 5
 
 
 def _qbt_add_options(category="", save_path="", paused=False):
@@ -1676,20 +1679,24 @@ def _magnet_display_name(magnet):
 
 
 def _redact_url(url):
-    """Return ``host/path`` for a URL, dropping the query string and userinfo.
+    """Return just the host of a URL, dropping path, query and userinfo.
 
-    Tracker / Prowlarr download links routinely carry apikey/passkey/token in
-    the query string, so raw URLs (and httpx error strings that embed them) must
-    never be echoed back through tool output or logs.
+    Tracker / Prowlarr download links carry apikey/passkey/token secrets in the
+    query string *and sometimes in the path itself* (e.g. private trackers like
+    nCore use ``/download/<passkey>/name.torrent``), so only the hostname is
+    safe to echo back through tool output or logs. A trailing ``/…`` signals a
+    path/query was present without revealing it.
     """
     try:
         parsed = urlparse(url)
     except ValueError:
         return "the provided URL"
-    cleaned = f"{parsed.hostname or ''}{parsed.path or ''}".strip()
-    if parsed.query:
-        cleaned += "?…"
-    return cleaned or "the provided URL"
+    host = parsed.hostname or ""
+    if not host:
+        return "the provided URL"
+    if (parsed.path and parsed.path != "/") or parsed.query:
+        return f"{host}/…"
+    return host
 
 
 def _filename_from_disposition(disposition):
@@ -1707,28 +1714,44 @@ def _filename_from_disposition(disposition):
 
 
 def _qbt_fetch_torrent(url):
-    """Download a remote .torrent.
+    """Download a remote .torrent, following redirects manually.
 
-    Returns ("file", (name, bytes)), ("magnet", uri) when the URL resolves to a
-    magnet link, or ("error", message). URLs are redacted in error messages
-    because tracker/Prowlarr download links often embed apikey/passkey tokens.
+    Redirects are followed by hand (rather than via httpx ``follow_redirects``)
+    so a tracker that 302-redirects to a ``magnet:`` URI is captured instead of
+    crashing httpx with an unsupported-scheme error. Returns
+    ("file", (name, bytes)), ("magnet", uri), or ("error", message). URLs are
+    redacted in error messages because tracker/Prowlarr download links often
+    embed apikey/passkey tokens.
     """
+    current = url
     try:
-        r = httpx.get(url, timeout=30, follow_redirects=True)
-        r.raise_for_status()
+        for _ in range(MAX_TORRENT_REDIRECTS + 1):
+            r = httpx.get(current, timeout=30, follow_redirects=False)
+            if r.is_redirect:
+                location = r.headers.get("location", "")
+                if location.lower().startswith("magnet:"):
+                    return "magnet", location.strip()
+                if not location:
+                    return "error", f"{_redact_url(current)} returned a redirect with no location."
+                current = urljoin(current, location)
+                continue
+            r.raise_for_status()
+            break
+        else:
+            return "error", f"Too many redirects fetching torrent from {_redact_url(url)}."
     except httpx.HTTPStatusError as error:
-        return "error", f"Could not download torrent (HTTP {error.response.status_code}) from {_redact_url(url)}."
+        return "error", f"Could not download torrent (HTTP {error.response.status_code}) from {_redact_url(current)}."
     except httpx.RequestError as error:
-        return "error", f"Could not download torrent from {_redact_url(url)} ({type(error).__name__})."
+        return "error", f"Could not download torrent from {_redact_url(current)} ({type(error).__name__})."
     content = r.content or b""
     if len(content) > MAX_TORRENT_BYTES:
         size_mb = len(content) // (1024 * 1024)
-        return "error", f"{_redact_url(url)} returned {size_mb} MB — too large to be a .torrent file."
+        return "error", f"{_redact_url(current)} returned {size_mb} MB — too large to be a .torrent file."
     if content[:7].lower() == b"magnet:":
         return "magnet", content.strip().decode("utf-8", "ignore")
     if not _looks_like_torrent(content):
-        return "error", f"{_redact_url(url)} did not return a valid .torrent file."
-    name = _filename_from_url(url)
+        return "error", f"{_redact_url(current)} did not return a valid .torrent file."
+    name = _filename_from_url(current)
     fn = _filename_from_disposition(r.headers.get("content-disposition", ""))
     if fn:
         name = fn if fn.lower().endswith(".torrent") else f"{fn}.torrent"
