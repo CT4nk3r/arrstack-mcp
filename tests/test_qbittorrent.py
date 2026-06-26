@@ -255,6 +255,11 @@ class AddResultNormalizationTests(unittest.TestCase):
         ok, detail = server._qbt_add_result({"unexpected": True})
         self.assertFalse(ok)
 
+    def test_empty_response_is_friendly(self):
+        ok, detail = server._qbt_add_result("")
+        self.assertFalse(ok)
+        self.assertIn("empty", detail.lower())
+
 
 class FetchTorrentTests(unittest.TestCase):
     @patch("server.httpx.get")
@@ -287,13 +292,73 @@ class FetchTorrentTests(unittest.TestCase):
     @patch("server.httpx.get")
     def test_http_status_error_is_reported(self, get):
         resp = http_response()
+        error_response = Mock()
+        error_response.status_code = 403
         resp.raise_for_status.side_effect = server.httpx.HTTPStatusError(
-            "403", request=Mock(), response=Mock()
+            "403", request=Mock(), response=error_response
         )
         get.return_value = resp
         kind, message = server._qbt_fetch_torrent("https://host/dl")
         self.assertEqual(kind, "error")
         self.assertIn("download", message.lower())
+        self.assertIn("403", message)
+
+
+class UrlRedactionTests(unittest.TestCase):
+    def test_redact_strips_query_and_userinfo(self):
+        redacted = server._redact_url("https://user:pass@tracker.example/dl?apikey=SECRET&passkey=PRIV")
+        self.assertIn("tracker.example/dl", redacted)
+        for leak in ("SECRET", "PRIV", "apikey", "passkey", "user", "pass"):
+            self.assertNotIn(leak, redacted)
+
+    @patch("server.httpx.get")
+    def test_fetch_error_does_not_leak_token(self, get):
+        get.return_value = http_response(content=b"<html>denied</html>")
+        url = "https://tracker.example/download?apikey=TOPSECRET&passkey=PRIVATE"
+        kind, message = server._qbt_fetch_torrent(url)
+        self.assertEqual(kind, "error")
+        self.assertNotIn("TOPSECRET", message)
+        self.assertNotIn("PRIVATE", message)
+        self.assertIn("tracker.example", message)
+
+    @patch("server.httpx.get")
+    def test_oversized_response_is_refused(self, get):
+        big = b"d" + b"0" * 64
+        get.return_value = http_response(content=big)
+        with patch.object(server, "MAX_TORRENT_BYTES", 16):
+            kind, message = server._qbt_fetch_torrent("https://host/x?token=zzz")
+        self.assertEqual(kind, "error")
+        self.assertIn("too large", message)
+        self.assertNotIn("zzz", message)
+
+
+class DispositionParsingTests(unittest.TestCase):
+    def test_quoted_filename_with_trailing_params(self):
+        self.assertEqual(
+            server._filename_from_disposition('attachment; filename="My File.torrent"; size=123'),
+            "My File.torrent",
+        )
+
+    def test_rfc5987_filename_star_is_decoded(self):
+        self.assertEqual(
+            server._filename_from_disposition("attachment; filename*=UTF-8''My%20Release.torrent"),
+            "My Release.torrent",
+        )
+
+    def test_empty_disposition_returns_blank(self):
+        self.assertEqual(server._filename_from_disposition(""), "")
+
+
+class TrackerlessTorrentTests(unittest.TestCase):
+    def test_torrent_without_announce_is_accepted(self):
+        trackerless = b"d10:created by3:foo4:infod6:lengthi1e4:name4:teste e"
+        self.assertNotIn(b"announce", trackerless)
+        self.assertTrue(server._looks_like_torrent(trackerless))
+
+    def test_info_key_beyond_old_window_is_accepted(self):
+        padded = b"d13:announce-list" + b"l5:x:000e" * 400 + b"4:infod6:lengthi1e e"
+        self.assertGreater(len(padded), 2048)
+        self.assertTrue(server._looks_like_torrent(padded))
 
 
 class ResolveSourceTests(unittest.TestCase):
