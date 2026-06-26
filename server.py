@@ -9,8 +9,12 @@ search, add, and manage your media library.
 import os
 import sys
 import json
+import base64
 import argparse
 import logging
+import binascii
+from urllib.parse import urlparse, parse_qs, unquote, urljoin
+
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -181,7 +185,7 @@ def _lidarr(path: str, method: str = "GET", json=None, params=None):
 _qbt_sid = None
 
 
-def _qbt(path: str, method: str = "GET", data=None, params=None, _retry: bool = False):
+def _qbt(path: str, method: str = "GET", data=None, params=None, files=None, _retry: bool = False):
     global _qbt_sid
     if not QBT_URL:
         return "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
@@ -203,13 +207,14 @@ def _qbt(path: str, method: str = "GET", data=None, params=None, _retry: bool = 
             cookies={"SID": _qbt_sid},
             data=data,
             params=params,
+            files=files,
             timeout=30,
         )
         if r.status_code == 403:
             _qbt_sid = None
             if _retry:
                 return "qBittorrent auth failure: 403 after retry."
-            return _qbt(path, method, data=data, params=params, _retry=True)
+            return _qbt(path, method, data=data, params=params, files=files, _retry=True)
         r.raise_for_status()
         try:
             return r.json()
@@ -1520,39 +1525,25 @@ def prowlarr_grab(index: int) -> str:
 
     # If it's a magnet link, send straight to qBittorrent
     if download_url.startswith("magnet:"):
-        try:
-            result = _qbt("/torrents/add", method="POST", data={"urls": download_url})
+        ok, detail = _qbt_add_url(download_url)
+        if ok:
             return f"✅ Sent magnet to qBittorrent: {title}"
-        except Exception as e:
-            return f"❌ Failed to add magnet to qBittorrent: {e}"
+        return f"❌ Failed to add magnet to qBittorrent: {detail}"
 
     # For .torrent download URLs (nCore, etc.), download via Prowlarr proxy then send to qBittorrent
-    try:
-        r = httpx.get(download_url, timeout=30, follow_redirects=True)
-        r.raise_for_status()
-        # Upload torrent file to qBittorrent
-        global _qbt_sid
-        if not QBT_URL:
-            return "qBittorrent is not configured."
-        if not _qbt_sid:
-            login = httpx.post(
-                f"{QBT_URL}/api/v2/auth/login",
-                data={"username": QBT_USER, "password": QBT_PASS},
-                timeout=10,
-            )
-            _qbt_sid = login.cookies.get("SID")
-        upload = httpx.post(
-            f"{QBT_URL}/api/v2/torrents/add",
-            cookies={"SID": _qbt_sid},
-            files={"torrents": (f"{title}.torrent", r.content, "application/x-bittorrent")},
-            timeout=15,
-        )
-        if upload.status_code == 403:
-            _qbt_sid = None
-            return "❌ qBittorrent authentication failed while uploading the torrent."
+    kind, value = _qbt_fetch_torrent(download_url)
+    if kind == "error":
+        return f"❌ Failed to grab release: {value}"
+    if kind == "magnet":
+        ok, detail = _qbt_add_url(value)
+        if ok:
+            return f"✅ Sent magnet to qBittorrent: {title}"
+        return f"❌ Failed to add magnet to qBittorrent: {detail}"
+    _, content = value
+    ok, detail = _qbt_add_file(f"{title}.torrent", content)
+    if ok:
         return f"✅ Downloaded and sent to qBittorrent: {title}"
-    except Exception as e:
-        return f"❌ Failed to grab release: {e}"
+    return f"❌ Failed to send torrent to qBittorrent: {detail}"
 
 
 @mcp.tool()
@@ -1573,6 +1564,251 @@ def prowlarr_health() -> str:
 # ════════════════════════════════════════════════════════════════
 #  qBittorrent Tools
 # ════════════════════════════════════════════════════════════════
+#
+# Helpers below resolve "anything the user hands us" — a magnet link, a remote
+# .torrent URL, a local .torrent path, or base64 torrent data — into a single
+# qBittorrent /torrents/add call. The public tools are thin wrappers over them.
+
+# Sanity ceiling for a remote .torrent download. Real torrent files are at most
+# a few MB even for very large multi-file releases; anything bigger is a wrong
+# URL (an HTML page, a media file, …), so we refuse it with a clear message.
+MAX_TORRENT_BYTES = 25 * 1024 * 1024
+# Bound on redirect hops when fetching a remote .torrent (we follow them by hand
+# so a redirect to a magnet: URI is captured rather than crashing httpx).
+MAX_TORRENT_REDIRECTS = 5
+
+
+def _qbt_add_options(category="", save_path="", paused=False):
+    """Build the optional form fields shared by every /torrents/add call."""
+    opts = {}
+    if category:
+        opts["category"] = category
+    if save_path:
+        opts["savepath"] = save_path
+        # Turn off Automatic Torrent Management so the explicit path is honored.
+        opts["autoTMM"] = "false"
+    if paused:
+        # qBittorrent <5 uses "paused"; 5.x renamed it to "stopped". Send both so
+        # the torrent is added stopped regardless of the server version.
+        opts["paused"] = "true"
+        opts["stopped"] = "true"
+    return opts
+
+
+def _qbt_add_result(result):
+    """Normalize a /torrents/add response into (ok, detail)."""
+    if isinstance(result, str):
+        text = result.strip()
+        if text.lower() == "ok.":
+            return True, ""
+        if text.lower() == "fails.":
+            return False, "qBittorrent rejected it (duplicate or invalid torrent)."
+        if not text:
+            return False, "qBittorrent returned an empty response."
+        # _qbt returns plain-text error messages (not configured, HTTP errors, …).
+        return False, text
+    return False, str(result)
+
+
+def _qbt_add_url(url, category="", save_path="", paused=False):
+    """Add a magnet link or remote .torrent URL via the `urls` field."""
+    data = {"urls": url}
+    data.update(_qbt_add_options(category, save_path, paused))
+    return _qbt_add_result(_qbt("/torrents/add", method="POST", data=data))
+
+
+def _qbt_add_file(filename, content, category="", save_path="", paused=False):
+    """Upload raw .torrent bytes via the multipart `torrents` field."""
+    files = {"torrents": (filename or "upload.torrent", content, "application/x-bittorrent")}
+    return _qbt_add_result(
+        _qbt(
+            "/torrents/add",
+            method="POST",
+            data=_qbt_add_options(category, save_path, paused),
+            files=files,
+        )
+    )
+
+
+def _looks_like_torrent(content):
+    """Cheap sanity check that bytes are a bencoded .torrent file.
+
+    A valid torrent is a bencoded dict (starts with ``d``) with a mandatory
+    top-level ``info`` key (bencoded as ``4:info``). ``announce`` is optional
+    (trackerless/DHT torrents omit it). Scan a generous prefix so the ``info``
+    key is found even after a large ``announce-list``.
+    """
+    if not content or content[:1] != b"d":
+        return False
+    head = content[:65536]
+    return b"4:info" in head or b"announce" in head
+
+
+def _decode_b64_torrent(text):
+    """Decode base64 (optionally a data: URI) into .torrent bytes, or None."""
+    raw = text.strip()
+    if raw.lower().startswith("data:"):
+        _, _, raw = raw.partition(",")
+    raw = "".join(raw.split())
+    if len(raw) < 16:
+        return None
+    try:
+        decoded = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return decoded if _looks_like_torrent(decoded) else None
+
+
+def _filename_from_url(url):
+    """Best-effort .torrent filename derived from a URL path."""
+    name = unquote(urlparse(url).path.rsplit("/", 1)[-1] or "")
+    if name and not name.lower().endswith(".torrent"):
+        name = f"{name}.torrent"
+    return name or "download.torrent"
+
+
+def _magnet_display_name(magnet):
+    """Human-readable name for a magnet link (dn= param, else btih hash)."""
+    qs = parse_qs(urlparse(magnet).query)
+    if qs.get("dn"):
+        return qs["dn"][0]
+    for xt in qs.get("xt", []):
+        if xt.lower().startswith("urn:btih:"):
+            return f"magnet ({xt.split(':')[-1][:16]}…)"
+    return "magnet link"
+
+
+def _redact_url(url):
+    """Return just the host of a URL, dropping path, query and userinfo.
+
+    Tracker / Prowlarr download links carry apikey/passkey/token secrets in the
+    query string *and sometimes in the path itself* (e.g. private trackers like
+    nCore use ``/download/<passkey>/name.torrent``), so only the hostname is
+    safe to echo back through tool output or logs. A trailing ``/…`` signals a
+    path/query was present without revealing it.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "the provided URL"
+    host = parsed.hostname or ""
+    if not host:
+        return "the provided URL"
+    if (parsed.path and parsed.path != "/") or parsed.query:
+        return f"{host}/…"
+    return host
+
+
+def _filename_from_disposition(disposition):
+    """Best-effort filename from a Content-Disposition header (RFC 5987 aware)."""
+    params = {}
+    for part in disposition.split(";")[1:]:
+        key, sep, value = part.partition("=")
+        if sep:
+            params[key.strip().lower()] = value.strip()
+    if params.get("filename*"):
+        # e.g. filename*=UTF-8''My%20Release.torrent
+        value = params["filename*"].split("''", 1)[-1]
+        return unquote(value).strip('"').strip("'")
+    return params.get("filename", "").strip('"').strip("'")
+
+
+def _qbt_fetch_torrent(url):
+    """Download a remote .torrent, following redirects manually.
+
+    Redirects are followed by hand (rather than via httpx ``follow_redirects``)
+    so a tracker that 302-redirects to a ``magnet:`` URI is captured instead of
+    crashing httpx with an unsupported-scheme error. Returns
+    ("file", (name, bytes)), ("magnet", uri), or ("error", message). URLs are
+    redacted in error messages because tracker/Prowlarr download links often
+    embed apikey/passkey tokens.
+    """
+    current = url
+    try:
+        for _ in range(MAX_TORRENT_REDIRECTS + 1):
+            r = httpx.get(current, timeout=30, follow_redirects=False)
+            if r.is_redirect:
+                location = r.headers.get("location", "")
+                if location.lower().startswith("magnet:"):
+                    return "magnet", location.strip()
+                if not location:
+                    return "error", f"{_redact_url(current)} returned a redirect with no location."
+                current = urljoin(current, location)
+                continue
+            r.raise_for_status()
+            break
+        else:
+            return "error", f"Too many redirects fetching torrent from {_redact_url(url)}."
+    except httpx.HTTPStatusError as error:
+        return "error", f"Could not download torrent (HTTP {error.response.status_code}) from {_redact_url(current)}."
+    except httpx.RequestError as error:
+        return "error", f"Could not download torrent from {_redact_url(current)} ({type(error).__name__})."
+    content = r.content or b""
+    if len(content) > MAX_TORRENT_BYTES:
+        size_mb = len(content) // (1024 * 1024)
+        return "error", f"{_redact_url(current)} returned {size_mb} MB — too large to be a .torrent file."
+    if content[:7].lower() == b"magnet:":
+        return "magnet", content.strip().decode("utf-8", "ignore")
+    if not _looks_like_torrent(content):
+        return "error", f"{_redact_url(current)} did not return a valid .torrent file."
+    name = _filename_from_url(current)
+    fn = _filename_from_disposition(r.headers.get("content-disposition", ""))
+    if fn:
+        name = fn if fn.lower().endswith(".torrent") else f"{fn}.torrent"
+    return "file", (name, content)
+
+
+def _qbt_resolve_source(source):
+    """Classify an arbitrary `source` string for adding to qBittorrent.
+
+    Returns one of:
+      ("magnet", magnet_uri)
+      ("file", (filename, content_bytes))
+      ("error", message)
+    """
+    src = (source or "").strip()
+    if not src:
+        return "error", "No source provided."
+    low = src.lower()
+    if low.startswith("magnet:"):
+        return "magnet", src
+    if low.startswith(("http://", "https://")):
+        return _qbt_fetch_torrent(src)
+    if os.path.isfile(src):
+        try:
+            with open(src, "rb") as fh:
+                content = fh.read()
+        except OSError as error:
+            return "error", f"Could not read file: {error}"
+        if not _looks_like_torrent(content):
+            return "error", f"{os.path.basename(src)} is not a valid .torrent file."
+        return "file", (os.path.basename(src), content)
+    decoded = _decode_b64_torrent(src)
+    if decoded is not None:
+        return "file", ("upload.torrent", decoded)
+    return (
+        "error",
+        "Unrecognized source. Provide a magnet link, an http(s) .torrent URL, "
+        "a local .torrent file path, or base64-encoded torrent data.",
+    )
+
+
+def _qbt_add_source(source, category="", save_path="", paused=False):
+    """Resolve `source` then add it. Returns a user-facing status string."""
+    kind, value = _qbt_resolve_source(source)
+    if kind == "error":
+        return f"❌ {value}"
+    if kind == "magnet":
+        ok, detail = _qbt_add_url(value, category, save_path, paused)
+        name = _magnet_display_name(value)
+    else:
+        name, content = value
+        ok, detail = _qbt_add_file(name, content, category, save_path, paused)
+    if ok:
+        cat = f" → {category}" if category else ""
+        state = " (added stopped)" if paused else ""
+        return f"✅ Added to qBittorrent{cat}{state}: {name}"
+    return f"❌ Failed to add to qBittorrent: {detail}"
 
 
 @mcp.tool()
@@ -1627,17 +1863,66 @@ def qbt_torrent_details(torrent_hash: str) -> str:
 
 
 @mcp.tool()
-def qbt_add_magnet(magnet_url: str, category: str = "") -> str:
-    """Add a magnet link to qBittorrent.
+def qbt_add(source: str, category: str = "", save_path: str = "", paused: bool = False) -> str:
+    """Add anything to qBittorrent and start downloading immediately.
+
+    This is the one-shot "just download it" tool. Hand it a `source` and it
+    auto-detects what it is:
+      • a magnet link (magnet:?xt=urn:btih:...)
+      • an http(s):// URL pointing to a .torrent file
+      • a path to a local .torrent file on the server
+      • base64-encoded .torrent file contents (optionally a data: URI)
 
     Args:
-        magnet_url: The magnet URI to add.
-        category: Optional category to assign (e.g. "tv", "movies").
+        source: A magnet link, .torrent URL, local .torrent path, or base64 torrent data.
+        category: Optional qBittorrent category to assign (e.g. "tv", "movies").
+        save_path: Optional download directory; defaults to the category/global path.
+        paused: If True, add the torrent without starting it.
     """
-    result = _qbt("/torrents/add", method="POST", data={"urls": magnet_url, "category": category})
-    if result == "Ok.":
-        return "✅ Torrent added successfully."
-    return f"Result: {result}"
+    return _qbt_add_source(source, category=category, save_path=save_path, paused=paused)
+
+
+@mcp.tool()
+def qbt_add_magnet(magnet_url: str, category: str = "", save_path: str = "", paused: bool = False) -> str:
+    """Add a magnet link to qBittorrent.
+
+    For .torrent files or URLs, use qbt_add_torrent_file (or qbt_add, which
+    accepts any source).
+
+    Args:
+        magnet_url: The magnet URI to add (must start with "magnet:").
+        category: Optional category to assign (e.g. "tv", "movies").
+        save_path: Optional download directory; defaults to the category/global path.
+        paused: If True, add the torrent without starting it.
+    """
+    if not magnet_url.strip().lower().startswith("magnet:"):
+        return "❌ That doesn't look like a magnet link (it must start with 'magnet:'). Use qbt_add for files or URLs."
+    magnet = magnet_url.strip()
+    ok, detail = _qbt_add_url(magnet, category, save_path, paused)
+    if ok:
+        cat = f" → {category}" if category else ""
+        state = " (added stopped)" if paused else ""
+        return f"✅ Magnet added to qBittorrent{cat}{state}: {_magnet_display_name(magnet)}"
+    return f"❌ Failed to add magnet: {detail}"
+
+
+@mcp.tool()
+def qbt_add_torrent_file(source: str, category: str = "", save_path: str = "", paused: bool = False) -> str:
+    """Add a .torrent file to qBittorrent.
+
+    `source` may be a local file path on the server, an http(s):// URL to a
+    .torrent file (downloaded and uploaded for you), or base64-encoded .torrent
+    contents. For magnet links use qbt_add_magnet (or qbt_add for anything).
+
+    Args:
+        source: Local .torrent path, .torrent URL, or base64 torrent data.
+        category: Optional category to assign (e.g. "tv", "movies").
+        save_path: Optional download directory; defaults to the category/global path.
+        paused: If True, add the torrent without starting it.
+    """
+    if source.strip().lower().startswith("magnet:"):
+        return "❌ That's a magnet link — use qbt_add_magnet (or qbt_add) instead."
+    return _qbt_add_source(source, category=category, save_path=save_path, paused=paused)
 
 
 @mcp.tool()
