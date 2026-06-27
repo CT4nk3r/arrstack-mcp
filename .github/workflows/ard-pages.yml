@@ -5,14 +5,19 @@ name: Publish ARD catalog
 # catalog is always self-contained (ARD_EMBED_CARD=true) and re-published on
 # every change, so it never goes stale.
 #
-# One-time setup (see the README "Static hosting on GitHub Pages" section):
-#   1. Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-#   2. (Optional) Settings -> Secrets and variables -> Actions -> Variables:
-#        ARD_DOMAIN      urn:air publisher namespace (defaults to <owner>.github.io)
-#        ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
-#        ARD_HOST_NAME   e.g. My Homelab             (optional)
-#        ARD_DID_WEB     opt-in did:web identity; only for a domain whose root
-#                        serves /.well-known/did.json (a project Pages site can't)
+# REQUIRED one-time setup (see the README "Static hosting on GitHub Pages"):
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# Until you do this, the "Build ARD catalog" job still succeeds (it generates
+# and validates the catalog) but the "Deploy to GitHub Pages" job fails, because
+# the GITHUB_TOKEN cannot enable Pages for you. After enabling it, re-run the
+# workflow (Actions -> Publish ARD catalog -> Run workflow) and it goes green.
+#
+# Optional repo variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   ARD_DOMAIN      urn:air publisher namespace (defaults to <owner>.github.io)
+#   ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
+#   ARD_HOST_NAME   e.g. My Homelab             (optional)
+#   ARD_DID_WEB     opt-in did:web identity; only for a domain whose root
+#                   serves /.well-known/did.json (a project Pages site can't)
 # No custom domain or DNS is required: the catalog is hosted on your
 # <owner>.github.io Pages domain and anchored to that urn:air identity by
 # default. did:web is left off unless ARD_DID_WEB is explicitly set.
@@ -45,13 +50,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Configure Pages
-        # Provisions the Pages site (build type "github-actions") so the deploy
-        # step works even before you flip the Source toggle in repo settings.
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
