@@ -157,7 +157,7 @@ All configuration is done via environment variables:
 | `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
 | `LOG_LEVEL` | No | Request logging level (default: `INFO`; credentials are never logged) |
 | `ARD_ENABLED` | No | Agentic Resource Discovery publishing: `auto` (default; on for HTTP transports), `true`, or `false` |
-| `ARD_PUBLIC_URL` | For ARD | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); enables absolute discovery links and a `did:web` identity |
+| `ARD_PUBLIC_URL` | No | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); advertises an absolute connection endpoint inside the card. Leave blank if the server is private. |
 | `ARD_DOMAIN` | No | Publisher domain for the `urn:air` / `did:web` identity (defaults to the host of `ARD_PUBLIC_URL`, else `localhost`) |
 | `ARD_HOST_NAME` | No | Human-readable catalog host name (default: `arrstack-mcp`) |
 | `ARD_EMBED_CARD` | No | `auto` (embed the server card inline only when `ARD_PUBLIC_URL` is unset), `true` (always embed — best for static hosting), or `false` (always reference it by URL) |
@@ -357,65 +357,82 @@ Both are served with `Content-Type: application/json` and
 Startup logs print the discovery URL when ARD is enabled. Set `ARD_ENABLED=false`
 to turn the endpoints off.
 
-### Static hosting on GitHub Pages (no public server required)
+### Static hosting on GitHub Pages (no domain, no public server)
 
-You don't need to expose the MCP server to publish a discoverable catalog — host
-the manifest as a static file on GitHub Pages and point a DNS record at it. This
-repo ships a workflow ([`.github/workflows/ard-pages.yml`](.github/workflows/ard-pages.yml))
-that regenerates the catalog from `server.py` on every change and deploys it, so
-it never goes stale.
+You don't need a custom domain **or** a publicly exposed MCP server to publish a
+discoverable catalog — host it as a static file on GitHub Pages, anchored to the
+`github.io` domain you already control. This repo ships a workflow
+([`.github/workflows/ard-pages.yml`](.github/workflows/ard-pages.yml)) that
+regenerates the catalog from `server.py` on every change and deploys it, so it
+never goes stale.
 
-**One-time setup:**
+**Setup (one-time, ~2 minutes):**
 
 1. **Enable Pages:** repo **Settings → Pages → Build and deployment → Source:
    "GitHub Actions"**.
-2. **Set repo variables** under **Settings → Secrets and variables → Actions →
-   Variables**:
-
-   | Variable | Required | Example | Purpose |
-   |----------|----------|---------|---------|
-   | `ARD_DOMAIN` | Yes | `arrstack.example.com` | Anchors the `urn:air:` / `did:web:` identity to a domain you own (the one you add the DNS record to). |
-   | `ARD_PUBLIC_URL` | No | `https://arrstack.example.com` | Where your MCP server actually runs, advertised inside the card. Leave blank if it's private (e.g. Tailscale-only). |
-   | `ARD_HOST_NAME` | No | `My Homelab` | Friendly catalog host name. |
-
-3. **Run it:** push to `main` (or **Actions → Publish ARD catalog → Run
-   workflow**). The catalog is published at:
+2. **Run it:** push to `main` (or **Actions → Publish ARD catalog → Run
+   workflow**). That's it — the catalog goes live at:
 
    ```
    https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
    ```
 
-4. **Add the DNS `TXT` record** so registries resolve your domain to that file
-   (since the file lives on `github.io`, not your domain):
-
-   | Name / Host | Type | Value |
-   |-------------|------|-------|
-   | `_catalog._agents.<your-domain>` | `TXT` | `url=https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json` |
-
-5. **Verify:**
+3. **Verify:**
 
    ```bash
    curl -L https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
    ```
 
-GitHub Pages serves the file over HTTPS with `Content-Type: application/json` and
-`Access-Control-Allow-Origin: *`, satisfying the ARD hosting requirements. The
-published manifest embeds the full server card inline, so it's self-contained.
+With no configuration, the publisher identity defaults to your Pages domain —
+`urn:air:ct4nk3r.github.io:server:arrstack` and `did:web:ct4nk3r.github.io`. This
+matches the ARD spec's "solo developer" examples (which use identifiers like
+`urn:air:github.com:alice-dev:...`). GitHub Pages serves the file over HTTPS with
+`Content-Type: application/json` and `Access-Control-Allow-Origin: *`, satisfying
+the ARD hosting requirements, and the manifest embeds the full server card inline
+so it's self-contained.
+
+**Optional repo variables** (Settings → Secrets and variables → Actions →
+Variables) let you override the defaults:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ARD_DOMAIN` | `<owner>.github.io` | Publisher identity for the `urn:air:` / `did:web:`. Set this only if you later get a custom domain. |
+| `ARD_PUBLIC_URL` | _(none)_ | Where your MCP server actually runs, advertised inside the card. Leave blank if it's private (e.g. Tailscale-only). |
+| `ARD_HOST_NAME` | `arrstack-mcp` | Friendly catalog host name. |
+
+### Getting it indexed by registries
+
+Hosting makes the catalog _reachable_; registries still have to find it. Without
+a custom domain you have two routes:
+
+- **Direct fetch / manual submission (works now).** Any agent or registry you
+  give the URL above can fetch and index it immediately — the spec explicitly
+  supports bypassing search and fetching a known catalog directly. Many
+  registries also let you submit a catalog URL for crawling.
+- **Automatic `.well-known` discovery (optional, still no purchase).** Crawlers
+  that probe `https://<domain>/.well-known/ai-catalog.json` expect it at a domain
+  _root_. To get that for free, create a GitHub **user site** — a repo named
+  `ct4nk3r.github.io` — and host the same files there, so the catalog sits at
+  `https://ct4nk3r.github.io/.well-known/ai-catalog.json` (root, not a
+  subpath). Copy [`.github/workflows/ard-pages.yml`](.github/workflows/ard-pages.yml)
+  and [`server.py`](server.py)/[`ard.py`](ard.py) into that repo, or just commit
+  the generated `ai-catalog.json` from the manual command below.
 
 > [!TIP]
-> If you own the domain and want the catalog at your domain's own `.well-known`
-> path (no `TXT` record needed), add a [custom domain](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site)
-> to the Pages site instead — then it's served at
-> `https://<your-domain>/.well-known/ai-catalog.json` directly.
+> If you _do_ get a domain later, you can either add a [custom domain](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site)
+> to this Pages site (served at `https://<your-domain>/.well-known/ai-catalog.json`),
+> or keep hosting on `github.io` and add a DNS record on your domain:
+> `_catalog._agents.<your-domain>  TXT  "url=https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json"`.
 
 ### Generating the files manually
 
-To host elsewhere (S3, a CDN, your own server), generate the documents yourself:
+To host elsewhere (another repo, S3, a CDN, your own server), generate the
+documents yourself:
 
 ```bash
-ARD_DOMAIN=arrstack.example.com ARD_EMBED_CARD=true \
+ARD_DOMAIN=ct4nk3r.github.io ARD_EMBED_CARD=true \
   python server.py --print-catalog > ai-catalog.json
-ARD_DOMAIN=arrstack.example.com \
+ARD_DOMAIN=ct4nk3r.github.io \
   python server.py --print-server-card > mcp-server-card.json
 ```
 

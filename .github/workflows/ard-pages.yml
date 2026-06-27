@@ -7,11 +7,12 @@ name: Publish ARD catalog
 #
 # One-time setup (see the README "Static hosting on GitHub Pages" section):
 #   1. Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-#   2. Settings -> Secrets and variables -> Actions -> Variables, add:
-#        ARD_DOMAIN      e.g. arrstack.example.com   (your DNS-TXT domain)
+#   2. (Optional) Settings -> Secrets and variables -> Actions -> Variables:
+#        ARD_DOMAIN      publisher identity (defaults to <owner>.github.io)
 #        ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
 #        ARD_HOST_NAME   e.g. My Homelab             (optional)
-#   3. Add the DNS TXT record from the README so registries can resolve it.
+# No custom domain or DNS is required: the catalog is hosted on your
+# <owner>.github.io Pages domain and anchored to that identity by default.
 
 on:
   push:
@@ -54,10 +55,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Warn when publisher domain is unset
-        if: ${{ vars.ARD_DOMAIN == '' }}
-        run: echo "::warning::ARD_DOMAIN repo variable is not set; the published catalog will use a non-anchored 'localhost' URN. Set it under Settings → Secrets and variables → Actions → Variables."
-
       - name: Generate ARD documents
         env:
           # All tools are advertised regardless of which services you run, so
@@ -66,10 +63,17 @@ jobs:
           ARD_DOMAIN: ${{ vars.ARD_DOMAIN }}
           ARD_PUBLIC_URL: ${{ vars.ARD_PUBLIC_URL }}
           ARD_HOST_NAME: ${{ vars.ARD_HOST_NAME }}
+          OWNER: ${{ github.repository_owner }}
           # Self-contained manifest: embed the server card inline so the file
           # works no matter where it is hosted.
           ARD_EMBED_CARD: "true"
         run: |
+          # No ARD_DOMAIN set? Anchor the identity to the GitHub Pages domain you
+          # already control (e.g. ct4nk3r.github.io) instead of a "localhost" URN.
+          if [ -z "$ARD_DOMAIN" ]; then
+            export ARD_DOMAIN="${OWNER}.github.io"
+            echo "::notice::ARD_DOMAIN not set; defaulting publisher identity to ${ARD_DOMAIN}."
+          fi
           mkdir -p _site/.well-known
           # Disable Jekyll so the dotted .well-known directory is published.
           touch _site/.nojekyll
