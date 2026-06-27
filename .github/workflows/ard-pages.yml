@@ -1,0 +1,96 @@
+name: Publish ARD catalog
+
+# Generates the ARD documents from server.py / ard.py and deploys them to
+# GitHub Pages, so the ai-catalog.json is publicly hosted for discovery. The
+# catalog is always self-contained (ARD_EMBED_CARD=true) and re-published on
+# every change, so it never goes stale.
+#
+# One-time setup (see the README "Static hosting on GitHub Pages" section):
+#   1. Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+#   2. Settings -> Secrets and variables -> Actions -> Variables, add:
+#        ARD_DOMAIN      e.g. arrstack.example.com   (your DNS-TXT domain)
+#        ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
+#        ARD_HOST_NAME   e.g. My Homelab             (optional)
+#   3. Add the DNS TXT record from the README so registries can resolve it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server.py"
+      - "ard.py"
+      - "requirements.txt"
+      - ".github/pages/**"
+      - ".github/workflows/ard-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent Pages deployment; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ARD catalog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Warn when publisher domain is unset
+        if: ${{ vars.ARD_DOMAIN == '' }}
+        run: echo "::warning::ARD_DOMAIN repo variable is not set; the published catalog will use a non-anchored 'localhost' URN. Set it under Settings → Secrets and variables → Actions → Variables."
+
+      - name: Generate ARD documents
+        env:
+          # All tools are advertised regardless of which services you run, so
+          # the public catalog describes the full capability surface.
+          ENABLED_SERVICES: all
+          ARD_DOMAIN: ${{ vars.ARD_DOMAIN }}
+          ARD_PUBLIC_URL: ${{ vars.ARD_PUBLIC_URL }}
+          ARD_HOST_NAME: ${{ vars.ARD_HOST_NAME }}
+          # Self-contained manifest: embed the server card inline so the file
+          # works no matter where it is hosted.
+          ARD_EMBED_CARD: "true"
+        run: |
+          mkdir -p _site/.well-known
+          # Disable Jekyll so the dotted .well-known directory is published.
+          touch _site/.nojekyll
+          # Serve the catalog at the canonical well-known path and at the root.
+          python server.py --print-catalog | tee _site/.well-known/ai-catalog.json > _site/ai-catalog.json
+          python server.py --print-server-card | tee _site/.well-known/mcp-server-card.json > _site/mcp-server-card.json
+          cp .github/pages/index.html _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

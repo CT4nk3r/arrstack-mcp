@@ -160,6 +160,7 @@ All configuration is done via environment variables:
 | `ARD_PUBLIC_URL` | For ARD | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); enables absolute discovery links and a `did:web` identity |
 | `ARD_DOMAIN` | No | Publisher domain for the `urn:air` / `did:web` identity (defaults to the host of `ARD_PUBLIC_URL`, else `localhost`) |
 | `ARD_HOST_NAME` | No | Human-readable catalog host name (default: `arrstack-mcp`) |
+| `ARD_EMBED_CARD` | No | `auto` (embed the server card inline only when `ARD_PUBLIC_URL` is unset), `true` (always embed — best for static hosting), or `false` (always reference it by URL) |
 | `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
 | `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
@@ -356,25 +357,71 @@ Both are served with `Content-Type: application/json` and
 Startup logs print the discovery URL when ARD is enabled. Set `ARD_ENABLED=false`
 to turn the endpoints off.
 
-### Static hosting
+### Static hosting on GitHub Pages (no public server required)
 
-If you'd rather host the manifest as a static file (GitHub Pages, S3, a CDN),
-generate it and upload it to `/.well-known/ai-catalog.json` on your domain:
+You don't need to expose the MCP server to publish a discoverable catalog — host
+the manifest as a static file on GitHub Pages and point a DNS record at it. This
+repo ships a workflow ([`.github/workflows/ard-pages.yml`](.github/workflows/ard-pages.yml))
+that regenerates the catalog from `server.py` on every change and deploys it, so
+it never goes stale.
+
+**One-time setup:**
+
+1. **Enable Pages:** repo **Settings → Pages → Build and deployment → Source:
+   "GitHub Actions"**.
+2. **Set repo variables** under **Settings → Secrets and variables → Actions →
+   Variables**:
+
+   | Variable | Required | Example | Purpose |
+   |----------|----------|---------|---------|
+   | `ARD_DOMAIN` | Yes | `arrstack.example.com` | Anchors the `urn:air:` / `did:web:` identity to a domain you own (the one you add the DNS record to). |
+   | `ARD_PUBLIC_URL` | No | `https://arrstack.example.com` | Where your MCP server actually runs, advertised inside the card. Leave blank if it's private (e.g. Tailscale-only). |
+   | `ARD_HOST_NAME` | No | `My Homelab` | Friendly catalog host name. |
+
+3. **Run it:** push to `main` (or **Actions → Publish ARD catalog → Run
+   workflow**). The catalog is published at:
+
+   ```
+   https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
+   ```
+
+4. **Add the DNS `TXT` record** so registries resolve your domain to that file
+   (since the file lives on `github.io`, not your domain):
+
+   | Name / Host | Type | Value |
+   |-------------|------|-------|
+   | `_catalog._agents.<your-domain>` | `TXT` | `url=https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json` |
+
+5. **Verify:**
+
+   ```bash
+   curl -L https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
+   ```
+
+GitHub Pages serves the file over HTTPS with `Content-Type: application/json` and
+`Access-Control-Allow-Origin: *`, satisfying the ARD hosting requirements. The
+published manifest embeds the full server card inline, so it's self-contained.
+
+> [!TIP]
+> If you own the domain and want the catalog at your domain's own `.well-known`
+> path (no `TXT` record needed), add a [custom domain](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site)
+> to the Pages site instead — then it's served at
+> `https://<your-domain>/.well-known/ai-catalog.json` directly.
+
+### Generating the files manually
+
+To host elsewhere (S3, a CDN, your own server), generate the documents yourself:
 
 ```bash
-ARD_PUBLIC_URL=https://arrstack.example.com python server.py --print-catalog > ai-catalog.json
-ARD_PUBLIC_URL=https://arrstack.example.com python server.py --print-server-card > mcp-server-card.json
+ARD_DOMAIN=arrstack.example.com ARD_EMBED_CARD=true \
+  python server.py --print-catalog > ai-catalog.json
+ARD_DOMAIN=arrstack.example.com \
+  python server.py --print-server-card > mcp-server-card.json
 ```
 
-When `ARD_PUBLIC_URL` is unset, `--print-catalog` embeds the full server card
-inline (`data`) so the manifest is self-contained. If you can't host at the
-`.well-known` path, point a DNS `TXT` record at the file instead:
-
-```
-_catalog._agents.<your-domain>   TXT   "url=https://<bucket>/ai-catalog.json"
-```
-
-See [`examples/`](examples/) for sample output.
+`ARD_EMBED_CARD=true` makes `--print-catalog` embed the server card inline so the
+manifest is self-contained (the default `auto` only embeds when `ARD_PUBLIC_URL`
+is unset). See [`examples/`](examples/) for sample output.
 
 ## Finding Your API Keys
 

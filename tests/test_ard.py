@@ -251,6 +251,36 @@ class PrintCatalogCliTests(unittest.TestCase):
         caps = catalog["entries"][0]["capabilities"]
         self.assertTrue(all(c.startswith(("sonarr_", "radarr_", "romm_")) for c in caps))
 
+    def test_print_catalog_embed_card_env_forces_self_contained(self):
+        """ARD_EMBED_CARD=true must embed the card inline even with a public URL.
+
+        This is the GitHub Pages / static-hosting scenario: a self-contained,
+        domain-anchored manifest regardless of where the MCP server runs.
+        """
+        env = os.environ.copy()
+        env["ENABLED_SERVICES"] = "all"
+        env["ARD_DOMAIN"] = "arrstack.example.com"
+        env["ARD_PUBLIC_URL"] = "https://arrstack.example.com"
+        env["ARD_EMBED_CARD"] = "true"
+
+        result = subprocess.run(
+            [sys.executable, "server.py", "--print-catalog"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        catalog = json.loads(result.stdout)
+        self.assertEqual(ard.validate_catalog(catalog), [])
+        entry = catalog["entries"][0]
+        self.assertIn("data", entry)  # embedded despite ARD_PUBLIC_URL being set
+        self.assertNotIn("url", entry)
+        self.assertEqual(entry["identifier"], "urn:air:arrstack.example.com:server:arrstack")
+        self.assertEqual(catalog["host"]["identifier"], "did:web:arrstack.example.com")
+        # the embedded card still advertises the connection endpoint
+        self.assertEqual(entry["data"]["url"], "https://arrstack.example.com/mcp")
+
 
 if __name__ == "__main__":
     unittest.main()

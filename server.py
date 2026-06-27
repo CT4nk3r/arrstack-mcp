@@ -75,10 +75,15 @@ ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
 # ARD_DOMAIN:     publisher domain for the urn:air / did:web identity (defaults
 #                 to the host of ARD_PUBLIC_URL, else "localhost").
 # ARD_HOST_NAME:  human-readable catalog host name.
+# ARD_EMBED_CARD: auto (default; embed the server card inline only when no
+#                 ARD_PUBLIC_URL is set) | true (always embed — best for static
+#                 hosting so the manifest is self-contained) | false (always
+#                 reference the hosted server card by URL).
 ARD_ENABLED = os.environ.get("ARD_ENABLED", "auto").strip().lower()
 ARD_PUBLIC_URL = os.environ.get("ARD_PUBLIC_URL", "").strip()
 ARD_DOMAIN = os.environ.get("ARD_DOMAIN", "").strip()
 ARD_HOST_NAME = os.environ.get("ARD_HOST_NAME", "").strip() or ard.DEFAULT_HOST_NAME
+ARD_EMBED_CARD = os.environ.get("ARD_EMBED_CARD", "auto").strip().lower()
 
 SERVICE_CONFIG = {
     "sonarr": ("Sonarr", SONARR_URL, "sonarr_"),
@@ -139,6 +144,7 @@ mcp = FastMCP(
 _active_transport = ard.DEFAULT_TRANSPORT
 
 _ARD_DISABLED_VALUES = {"false", "0", "no", "off", "disabled"}
+_ARD_TRUE_VALUES = {"true", "1", "yes", "on"}
 _ARD_RESPONSE_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Cache-Control": "public, max-age=300",
@@ -148,6 +154,15 @@ _ARD_RESPONSE_HEADERS = {
 def _ard_disabled() -> bool:
     """Whether ARD publishing has been explicitly turned off."""
     return ARD_ENABLED in _ARD_DISABLED_VALUES
+
+
+def _ard_embed_card():
+    """Resolve ARD_EMBED_CARD into True/False, or None for automatic behaviour."""
+    if ARD_EMBED_CARD in _ARD_TRUE_VALUES:
+        return True
+    if ARD_EMBED_CARD in _ARD_DISABLED_VALUES:
+        return False
+    return None
 
 
 def _now_iso() -> str:
@@ -165,6 +180,7 @@ def _build_ard_catalog(updated_at: str | None = None) -> dict:
         host_name=ARD_HOST_NAME,
         transport=_active_transport,
         updated_at=updated_at,
+        embed_card=_ard_embed_card(),
     )
 
 
