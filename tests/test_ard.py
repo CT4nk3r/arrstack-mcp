@@ -52,6 +52,9 @@ class HelperTests(unittest.TestCase):
         # IPv6 literals contain ':' which is invalid in the URN publisher segment.
         self.assertEqual(ard.resolve_publisher(domain="::1"), ard.FALLBACK_PUBLISHER)
 
+    def test_resolve_publisher_strips_port_from_domain(self):
+        self.assertEqual(ard.resolve_publisher(domain="Example.com:8443"), "example.com")
+
     def test_normalize_public_url(self):
         self.assertEqual(ard.normalize_public_url("https://h/"), "https://h")
         self.assertIsNone(ard.normalize_public_url(""))
@@ -168,6 +171,24 @@ class CatalogTests(unittest.TestCase):
         catalog["entries"][0]["url"] = "https://x/card.json"  # now has both url and data
         problems = ard.validate_catalog(catalog)
         self.assertTrue(any("exactly one" in p for p in problems))
+
+    def test_validator_rejects_null_or_empty_url(self):
+        # A null/empty 'url' must not satisfy the value-or-reference rule.
+        catalog = self._build()
+        del catalog["entries"][0]["data"]
+        catalog["entries"][0]["url"] = None
+        self.assertTrue(any("exactly one" in p for p in ard.validate_catalog(catalog)))
+        catalog["entries"][0]["url"] = ""
+        self.assertTrue(any("exactly one" in p for p in ard.validate_catalog(catalog)))
+
+    def test_embed_false_without_public_url_still_embeds(self):
+        # Forcing reference mode with no base URL must fall back to an inline
+        # card rather than emitting "url": null (which the real schema rejects).
+        catalog = self._build(embed_card=False)
+        self.assertEqual(ard.validate_catalog(catalog), [])
+        entry = catalog["entries"][0]
+        self.assertIn("data", entry)
+        self.assertNotIn("url", entry)
 
     def test_validator_flags_bad_urn(self):
         catalog = self._build()

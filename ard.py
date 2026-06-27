@@ -99,10 +99,19 @@ def resolve_publisher(domain: str | None = None, public_url: str | None = None) 
     """Resolve the URN ``<publisher>`` segment from config.
 
     Preference order: explicit ``domain`` → host of ``public_url`` → fallback.
-    The result is always a schema-valid publisher token; anything that is not a
-    bare FQDN/IP (e.g. an IPv6 literal) degrades to :data:`FALLBACK_PUBLISHER`.
+    The result is always a schema-valid publisher token; a ``host:port`` value
+    is reduced to its host, and anything that is still not a bare FQDN/IP (e.g.
+    an IPv6 literal) degrades to :data:`FALLBACK_PUBLISHER`.
     """
     candidate = (domain or "").strip().lower()
+    if candidate:
+        # Accept a bare host, a host:port, or a URL-ish value and keep the host.
+        try:
+            host = urlparse(candidate if "//" in candidate else "//" + candidate).hostname
+        except ValueError:
+            host = None
+        if host:
+            candidate = host
     if not candidate and public_url:
         candidate = (urlparse(public_url).hostname or "").strip().lower()
     if candidate and _PUBLISHER_PATTERN.match(candidate):
@@ -260,10 +269,11 @@ def build_catalog(
         public_url=base_url,
         transport=transport,
     )
-    if embed_card:
-        entry["data"] = card
-    else:
-        entry["url"] = server_card_url(base_url)
+    # Strict value-or-reference: reference the hosted card by URL only when we
+    # actually have one, otherwise embed it inline so we never emit a null url.
+    card_url = None if embed_card else server_card_url(base_url)
+    if card_url:
+        entry["url"] = card_url
         connect_url = endpoint_url(base_url, transport)
         if connect_url:
             entry["metadata"] = {
@@ -271,6 +281,8 @@ def build_catalog(
                 "transport": transport,
                 "protocol": "mcp",
             }
+    else:
+        entry["data"] = card
 
     if updated_at:
         entry["updatedAt"] = updated_at
@@ -326,9 +338,11 @@ def iter_validation_errors(catalog: dict):
         if identifier and not URN_PATTERN.match(identifier):
             yield f"{where}.identifier {identifier!r} is not a valid urn:air URN"
 
-        has_url, has_data = "url" in entry, "data" in entry
+        # Exactly one of a non-empty 'url' string or a 'data' object (schema oneOf).
+        has_url = isinstance(entry.get("url"), str) and bool(entry.get("url"))
+        has_data = isinstance(entry.get("data"), dict)
         if has_url == has_data:
-            yield f"{where} must have exactly one of 'url' or 'data'"
+            yield f"{where} must have exactly one of a non-empty 'url' string or a 'data' object"
 
         queries = entry.get("representativeQueries")
         if queries is not None:

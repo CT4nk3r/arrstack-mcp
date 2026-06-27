@@ -43,6 +43,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Configure Pages
+        # Provisions the Pages site (build type "github-actions") so the deploy
+        # step works even before you flip the Source toggle in repo settings.
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
