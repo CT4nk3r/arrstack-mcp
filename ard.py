@@ -1,9 +1,14 @@
 """
 Agentic Resource Discovery (ARD) support for arrstack-mcp.
 
-Implements the ARD specification (https://agenticresourcediscovery.org/,
-schema: https://github.com/ards-project/ard-spec) so this MCP server can be
-*published*, *discovered*, and *verified* across the agentic web.
+Implements the *publisher* side of the ARD specification
+(https://agenticresourcediscovery.org/, schema:
+https://github.com/ards-project/ard-spec) so this MCP server can be *published*
+and *discovered* across the agentic web. It produces discoverable metadata only:
+it does not add authentication to the server, and it implements no cryptographic
+``trustManifest``. A ``did:web`` host identity is emitted solely as an opt-in
+(see ``build_catalog(did_web=...)``) for operators who actually control the
+domain root; clients must still verify the operator before connecting.
 
 Two documents are produced from the live server:
 
@@ -234,6 +239,7 @@ def build_catalog(
     transport: str = DEFAULT_TRANSPORT,
     updated_at: str | None = None,
     embed_card: bool | None = None,
+    did_web: str | None = None,
 ) -> dict:
     """Build the ``ai-catalog.json`` capability manifest for this server.
 
@@ -246,6 +252,13 @@ def build_catalog(
       hosting so the manifest is self-contained).
 
     ``embed_card`` forces one mode; by default it follows ``public_url``.
+
+    The entry ``identifier`` is a domain-anchored ``urn:air`` URN — a *logical*
+    name that does not need to resolve. A host ``did:web`` identity is only
+    emitted when ``did_web`` names a domain whose root the operator actually
+    controls (so ``https://<domain>/.well-known/did.json`` could resolve); it is
+    never inferred from ``public_url`` or ``domain``, to avoid advertising an
+    identity that can't be verified.
     """
     base_url = normalize_public_url(public_url)
     publisher = resolve_publisher(domain, base_url)
@@ -291,8 +304,13 @@ def build_catalog(
         "displayName": host_name,
         "documentationUrl": DOCUMENTATION_URL,
     }
-    if publisher != FALLBACK_PUBLISHER:
-        host["identifier"] = f"did:web:{publisher}"
+    # did:web is opt-in: only advertise it for a domain the operator declares
+    # they control (and could host a DID document at), never inferred from the
+    # publisher/public URL — otherwise we'd claim an identity that won't resolve.
+    if did_web:
+        did_host = resolve_publisher(domain=did_web)
+        if did_host != FALLBACK_PUBLISHER:
+            host["identifier"] = f"did:web:{did_host}"
 
     return {
         "specVersion": SPEC_VERSION,

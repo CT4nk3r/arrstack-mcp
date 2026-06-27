@@ -11,7 +11,13 @@ from starlette.testclient import TestClient
 import ard
 import server
 
+try:
+    import jsonschema
+except ImportError:  # pragma: no cover - exercised only without the dev extra
+    jsonschema = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+SCHEMA_PATH = REPO_ROOT / "tests" / "fixtures" / "ai-catalog.schema.json"
 
 # A tiny stand-in MCP server so capability/tool assertions don't depend on the
 # full 94-tool arrstack catalog.
@@ -138,7 +144,7 @@ class CatalogTests(unittest.TestCase):
         self.assertRegex(entry["identifier"], ard.URN_PATTERN)
         self.assertNotIn("identifier", catalog["host"])  # no did:web for localhost
 
-    def test_reference_catalog_uses_url_and_did_web(self):
+    def test_reference_catalog_uses_url_without_did_web_by_default(self):
         catalog = self._build(
             public_url="https://arrstack.example.com",
             host_name="My Homelab",
@@ -151,7 +157,24 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(entry["identifier"], "urn:air:arrstack.example.com:server:arrstack")
         self.assertEqual(entry["updatedAt"], "2026-01-01T00:00:00Z")
         self.assertEqual(entry["metadata"]["endpoint"], "https://arrstack.example.com/mcp")
+        # did:web is opt-in: not inferred from public_url/domain.
+        self.assertNotIn("identifier", catalog["host"])
+
+    def test_did_web_emitted_only_when_explicitly_opted_in(self):
+        catalog = self._build(
+            public_url="https://arrstack.example.com",
+            did_web="arrstack.example.com",
+        )
+        self.assertEqual(ard.validate_catalog(catalog), [])
         self.assertEqual(catalog["host"]["identifier"], "did:web:arrstack.example.com")
+        # The logical URN publisher is independent of the did:web opt-in.
+        self.assertEqual(
+            catalog["entries"][0]["identifier"], "urn:air:arrstack.example.com:server:arrstack"
+        )
+
+    def test_did_web_ignored_when_not_a_valid_domain(self):
+        catalog = self._build(public_url="https://arrstack.example.com", did_web="::1")
+        self.assertNotIn("identifier", catalog["host"])
 
     def test_embed_card_override_forces_inline_data(self):
         catalog = self._build(public_url="https://arrstack.example.com", embed_card=True)
@@ -294,6 +317,7 @@ class PrintCatalogCliTests(unittest.TestCase):
         env["ARD_DOMAIN"] = "arrstack.example.com"
         env["ARD_PUBLIC_URL"] = "https://arrstack.example.com"
         env["ARD_EMBED_CARD"] = "true"
+        env["ARD_DID_WEB"] = "arrstack.example.com"
 
         result = subprocess.run(
             [sys.executable, "server.py", "--print-catalog"],
@@ -312,6 +336,79 @@ class PrintCatalogCliTests(unittest.TestCase):
         self.assertEqual(catalog["host"]["identifier"], "did:web:arrstack.example.com")
         # the embedded card still advertises the connection endpoint
         self.assertEqual(entry["data"]["url"], "https://arrstack.example.com/mcp")
+
+    def test_print_catalog_no_did_web_without_opt_in(self):
+        # ARD_DOMAIN alone (no ARD_DID_WEB) must not advertise a did:web identity.
+        env = os.environ.copy()
+        env["ENABLED_SERVICES"] = "all"
+        env["ARD_DOMAIN"] = "ct4nk3r.github.io"
+        env["ARD_EMBED_CARD"] = "true"
+        result = subprocess.run(
+            [sys.executable, "server.py", "--print-catalog"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
+        )
+        catalog = json.loads(result.stdout)
+        self.assertEqual(ard.validate_catalog(catalog), [])
+        self.assertEqual(
+            catalog["entries"][0]["identifier"], "urn:air:ct4nk3r.github.io:server:arrstack"
+        )
+        self.assertNotIn("identifier", catalog["host"])
+
+
+@unittest.skipUnless(jsonschema is not None, "jsonschema not installed (pip install -r requirements-dev.txt)")
+class OfficialSchemaTests(unittest.TestCase):
+    """Validate generated catalogs against the vendored official ai-catalog schema.
+
+    The hand-rolled ``ard.validate_catalog`` is a fast CLI guard; this is the
+    authoritative check against the real JSON Schema so conformance can't
+    silently regress as ARD evolves. Refresh the fixture from
+    https://github.com/ards-project/ard-spec spec/schemas/ai-catalog.schema.json.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = jsonschema.Draft202012Validator(
+            json.loads(SCHEMA_PATH.read_text())
+        )
+
+    def _assert_valid(self, catalog):
+        errors = sorted(self.validator.iter_errors(catalog), key=lambda e: list(e.path))
+        self.assertEqual(
+            errors, [], msg="; ".join(f"{list(e.path)}: {e.message}" for e in errors)
+        )
+
+    def test_all_generation_modes_match_official_schema(self):
+        cfg = server.SERVICE_CONFIG
+        all_services = set(cfg)
+        cases = {
+            "embedded_no_domain": dict(enabled_services=all_services, service_config=cfg),
+            "reference_public_url": dict(
+                enabled_services=all_services, service_config=cfg,
+                public_url="https://arrstack.example.com",
+            ),
+            "embed_forced_with_did_web": dict(
+                enabled_services=all_services, service_config=cfg,
+                public_url="https://arrstack.example.com", embed_card=True,
+                did_web="arrstack.example.com", updated_at="2026-01-01T00:00:00Z",
+            ),
+            "github_pages_default": dict(
+                enabled_services=all_services, service_config=cfg,
+                domain="ct4nk3r.github.io", embed_card=True,
+            ),
+            "single_service": dict(enabled_services={"romm"}, service_config=cfg),
+            "no_services": dict(enabled_services=set(), service_config=cfg),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(mode=name):
+                catalog = ard.build_catalog(server.mcp, **kwargs)
+                self._assert_valid(catalog)
+
+    def test_committed_example_matches_official_schema(self):
+        self._assert_valid(json.loads((REPO_ROOT / "examples" / "ai-catalog.json").read_text()))
 
 
 if __name__ == "__main__":

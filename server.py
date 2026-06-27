@@ -68,22 +68,31 @@ ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
 
 # ── Agentic Resource Discovery (ARD) ──
 # Publish this MCP server to ARD registries/crawlers. See ard.py and README.
+# ARD publishes discoverable *metadata* only — it does not authenticate the
+# server or make it safe to expose. Keep HTTP transports behind Tailscale or an
+# authenticated proxy (see the Security section of the README).
 # ARD_ENABLED:    auto (default, serve on HTTP transports) | true | false
 # ARD_PUBLIC_URL: public base URL clients reach this server at, e.g.
-#                 https://arrstack.example.com — enables absolute card/endpoint
-#                 links and a verifiable did:web identity.
-# ARD_DOMAIN:     publisher domain for the urn:air / did:web identity (defaults
-#                 to the host of ARD_PUBLIC_URL, else "localhost").
+#                 https://arrstack.example.com — advertises an absolute
+#                 connection endpoint inside the card.
+# ARD_DOMAIN:     publisher domain for the urn:air logical identifier (defaults
+#                 to the host of ARD_PUBLIC_URL, else "localhost"). This is a
+#                 name, not a resolvable address.
 # ARD_HOST_NAME:  human-readable catalog host name.
 # ARD_EMBED_CARD: auto (default; embed the server card inline only when no
 #                 ARD_PUBLIC_URL is set) | true (always embed — best for static
 #                 hosting so the manifest is self-contained) | false (always
 #                 reference the hosted server card by URL).
+# ARD_DID_WEB:    opt-in did:web host identity, e.g. arrstack.example.com. Only
+#                 set this for a domain whose root you control and where you host
+#                 a DID document — it is otherwise left off so we never advertise
+#                 an identity that can't resolve.
 ARD_ENABLED = os.environ.get("ARD_ENABLED", "auto").strip().lower()
 ARD_PUBLIC_URL = os.environ.get("ARD_PUBLIC_URL", "").strip()
 ARD_DOMAIN = os.environ.get("ARD_DOMAIN", "").strip()
 ARD_HOST_NAME = os.environ.get("ARD_HOST_NAME", "").strip() or ard.DEFAULT_HOST_NAME
 ARD_EMBED_CARD = os.environ.get("ARD_EMBED_CARD", "auto").strip().lower()
+ARD_DID_WEB = os.environ.get("ARD_DID_WEB", "").strip()
 
 SERVICE_CONFIG = {
     "sonarr": ("Sonarr", SONARR_URL, "sonarr_"),
@@ -191,6 +200,7 @@ def _build_ard_catalog(updated_at: str | None = None) -> dict:
         transport=_active_transport,
         updated_at=updated_at,
         embed_card=_ard_embed_card(),
+        did_web=ARD_DID_WEB or None,
     )
 
 

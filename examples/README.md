@@ -1,21 +1,27 @@
-# ARD example artifacts
+# ARD example artifact
 
-These files show what arrstack-mcp publishes for [Agentic Resource Discovery
-(ARD)](https://agenticresourcediscovery.org/). They were generated for the
-example host `https://arrstack.example.com` with **all** services enabled.
+[`ai-catalog.json`](ai-catalog.json) shows what arrstack-mcp publishes for
+[Agentic Resource Discovery (ARD)](https://agenticresourcediscovery.org/). It was
+generated for the example host `https://arrstack.example.com` with **all**
+services enabled and an opt-in `did:web` identity.
 
-| File | Hosted at | Purpose |
-|------|-----------|---------|
-| [`ai-catalog.json`](ai-catalog.json) | `/.well-known/ai-catalog.json` | The ARD capability manifest. Advertises this server as one `application/mcp-server-card+json` entry with `capabilities`, `representativeQueries`, and a `did:web` identity. |
-| [`mcp-server-card.json`](mcp-server-card.json) | `/.well-known/mcp-server-card.json` | The MCP server card referenced by the catalog entry's `url`. Lists every advertised tool with its `inputSchema` plus the MCP connection endpoint. |
+It's the ARD **capability manifest** hosted at `/.well-known/ai-catalog.json`,
+advertising this server as one `application/mcp-server-card+json` entry with
+`capabilities`, `representativeQueries`, a `urn:air` identifier, and (here) a
+`did:web` host identity. This sample uses *reference* mode: the entry's `url`
+points at the MCP **server card** rather than embedding it, to keep the file
+small. The card itself (every tool + its `inputSchema`) is generated live and
+isn't committed — generate it with `--print-server-card` (see below). When the
+server hosts statically (e.g. the GitHub Pages workflow with `ARD_EMBED_CARD=true`)
+the card is embedded inline instead, so the manifest is self-contained.
 
-You normally don't host these by hand — the running server serves both paths
-live, generated from whatever `ENABLED_SERVICES` advertises. Regenerate these
-samples (or a deployment-specific manifest for static hosting) with:
+You normally don't host this by hand — the running server serves both
+`/.well-known/` paths live, generated from whatever `ENABLED_SERVICES` advertises.
+Regenerate a deployment-specific manifest for static hosting with:
 
 ```bash
-ARD_PUBLIC_URL=https://your-host python server.py --print-catalog > ai-catalog.json
-ARD_PUBLIC_URL=https://your-host python server.py --print-server-card > mcp-server-card.json
+ARD_DOMAIN=your-host ARD_EMBED_CARD=true python server.py --print-catalog > ai-catalog.json
+ARD_DOMAIN=your-host python server.py --print-server-card > mcp-server-card.json
 ```
 
 See the **Agentic Resource Discovery (ARD)** section of the top-level

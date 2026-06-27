@@ -8,11 +8,14 @@ name: Publish ARD catalog
 # One-time setup (see the README "Static hosting on GitHub Pages" section):
 #   1. Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 #   2. (Optional) Settings -> Secrets and variables -> Actions -> Variables:
-#        ARD_DOMAIN      publisher identity (defaults to <owner>.github.io)
+#        ARD_DOMAIN      urn:air publisher namespace (defaults to <owner>.github.io)
 #        ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
 #        ARD_HOST_NAME   e.g. My Homelab             (optional)
+#        ARD_DID_WEB     opt-in did:web identity; only for a domain whose root
+#                        serves /.well-known/did.json (a project Pages site can't)
 # No custom domain or DNS is required: the catalog is hosted on your
-# <owner>.github.io Pages domain and anchored to that identity by default.
+# <owner>.github.io Pages domain and anchored to that urn:air identity by
+# default. did:web is left off unless ARD_DID_WEB is explicitly set.
 
 on:
   push:
@@ -70,6 +73,7 @@ jobs:
           ARD_DOMAIN: ${{ vars.ARD_DOMAIN }}
           ARD_PUBLIC_URL: ${{ vars.ARD_PUBLIC_URL }}
           ARD_HOST_NAME: ${{ vars.ARD_HOST_NAME }}
+          ARD_DID_WEB: ${{ vars.ARD_DID_WEB }}
           OWNER: ${{ github.repository_owner }}
           # Self-contained manifest: embed the server card inline so the file
           # works no matter where it is hosted.
