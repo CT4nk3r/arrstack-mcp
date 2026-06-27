@@ -5,14 +5,22 @@ name: Publish ARD catalog
 # catalog is always self-contained (ARD_EMBED_CARD=true) and re-published on
 # every change, so it never goes stale.
 #
-# One-time setup (see the README "Static hosting on GitHub Pages" section):
+# REQUIRED one-time setup to publish (see the README "Static hosting on GitHub
+# Pages" section):
 #   1. Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-#   2. (Optional) Settings -> Secrets and variables -> Actions -> Variables:
-#        ARD_DOMAIN      urn:air publisher namespace (defaults to <owner>.github.io)
-#        ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
-#        ARD_HOST_NAME   e.g. My Homelab             (optional)
-#        ARD_DID_WEB     opt-in did:web identity; only for a domain whose root
-#                        serves /.well-known/did.json (a project Pages site can't)
+#   2. Settings -> Secrets and variables -> Actions -> Variables:
+#        ARD_PAGES_ENABLED = true
+# The deploy job is gated on ARD_PAGES_ENABLED, so until you set it the workflow
+# stays green: the "Build ARD catalog" job still generates and validates the
+# catalog, and "Deploy to GitHub Pages" is skipped (the GITHUB_TOKEN cannot
+# enable Pages for you). After both steps, every change re-publishes the catalog.
+#
+# Optional repo variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   ARD_DOMAIN      urn:air publisher namespace (defaults to <owner>.github.io)
+#   ARD_PUBLIC_URL  e.g. https://arrstack.example.com   (optional endpoint)
+#   ARD_HOST_NAME   e.g. My Homelab             (optional)
+#   ARD_DID_WEB     opt-in did:web identity; only for a domain whose root
+#                   serves /.well-known/did.json (a project Pages site can't)
 # No custom domain or DNS is required: the catalog is hosted on your
 # <owner>.github.io Pages domain and anchored to that urn:air identity by
 # default. did:web is left off unless ARD_DID_WEB is explicitly set.
@@ -45,13 +53,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Configure Pages
-        # Provisions the Pages site (build type "github-actions") so the deploy
-        # step works even before you flip the Source toggle in repo settings.
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -101,6 +102,12 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    # Opt-in gate: the deploy can only work once Pages is enabled (Settings ->
+    # Pages -> Source: "GitHub Actions"), which the GITHUB_TOKEN can't do for
+    # you. Set the repo variable ARD_PAGES_ENABLED=true after enabling Pages.
+    # Until then this job is skipped, so the workflow stays green (the build job
+    # still generates and validates the catalog) instead of failing on deploy.
+    if: ${{ vars.ARD_PAGES_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
