@@ -1,0 +1,7 @@
+# Development / CI dependencies (not required at runtime).
+# Install with: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Validates generated ARD catalogs against the vendored official ai-catalog
+# JSON Schema in tests/test_ard.py (see tests/fixtures/ai-catalog.schema.json).
+jsonschema>=4.0.0

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>arrstack-mcp — Agentic Resource Discovery</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6; max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem;
+    }
+    h1 { margin-bottom: 0.25rem; }
+    .sub { color: #888; margin-top: 0; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { background: rgba(127,127,127,0.12); padding: 1rem; border-radius: 8px; overflow-x: auto; }
+    a.card {
+      display: block; padding: 0.9rem 1.1rem; margin: 0.5rem 0; border-radius: 8px;
+      border: 1px solid rgba(127,127,127,0.35); text-decoration: none; color: inherit;
+    }
+    a.card:hover { border-color: currentColor; }
+    a.card b { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    footer { margin-top: 2.5rem; color: #888; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1><span aria-hidden="true">🎬</span> arrstack-mcp</h1>
+  <p class="sub">Discoverable via <a href="https://agenticresourcediscovery.org/">Agentic Resource Discovery (ARD)</a>.</p>
+
+  <p>
+    This page hosts the ARD capability manifest for
+    <a href="https://github.com/ct4nk3r/arrstack-mcp">arrstack-mcp</a>, an MCP
+    server that exposes a homelab media and game stack (Sonarr, Radarr, Lidarr,
+    Prowlarr, qBittorrent, SABnzbd, RDTClient, Jellyfin, RomM, GameVault,
+    Bookshelf) as tools for AI assistants.
+  </p>
+
+  <a class="card" href="./.well-known/ai-catalog.json">
+    <b>/.well-known/ai-catalog.json</b><br />
+    ARD capability manifest — the entry point for registries and agents.
+  </a>
+  <a class="card" href="./.well-known/mcp-server-card.json">
+    <b>/.well-known/mcp-server-card.json</b><br />
+    MCP server card — every advertised tool and its input schema.
+  </a>
+
+  <p>Agents can fetch the manifest directly:</p>
+  <pre><code>curl -L <span id="catalog-url">./.well-known/ai-catalog.json</span></code></pre>
+
+  <footer>
+    Generated from <code>server.py</code> on each change. See the project
+    <a href="https://github.com/ct4nk3r/arrstack-mcp#agentic-resource-discovery-ard">README</a>
+    for details.
+  </footer>
+
+  <script>
+    // Show an absolute URL in the curl example when viewed on the hosted site.
+    var el = document.getElementById("catalog-url");
+    if (el && location.protocol.indexOf("http") === 0) {
+      var base = location.origin + location.pathname.replace(/index\.html$/, "").replace(/\/$/, "");
+      el.textContent = base + "/.well-known/ai-catalog.json";
+    }
+  </script>
+</body>
+</html>

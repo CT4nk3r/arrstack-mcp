@@ -156,6 +156,12 @@ All configuration is done via environment variables:
 | `GAMEVAULT_API_KEY` | If GameVault | GameVault API key |
 | `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
 | `LOG_LEVEL` | No | Request logging level (default: `INFO`; credentials are never logged) |
+| `ARD_ENABLED` | No | Agentic Resource Discovery publishing: `auto` (default; on for HTTP transports), `true`, or `false` |
+| `ARD_PUBLIC_URL` | No | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); advertises an absolute connection endpoint inside the card. Leave blank if the server is private. |
+| `ARD_DOMAIN` | No | Publisher domain for the `urn:air` logical identifier (defaults to the host of `ARD_PUBLIC_URL`, else `localhost`) |
+| `ARD_HOST_NAME` | No | Human-readable catalog host name (default: `arrstack-mcp`) |
+| `ARD_EMBED_CARD` | No | `auto` (embed the server card inline only when `ARD_PUBLIC_URL` is unset), `true` (always embed — best for static hosting), or `false` (always reference it by URL) |
+| `ARD_DID_WEB` | No | Opt-in `did:web` host identity (e.g. `arrstack.example.com`). Only set for a domain whose root you control and where you host a `/.well-known/did.json`; otherwise left off |
 | `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
 | `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
@@ -315,6 +321,155 @@ python server.py --transport streamable-http --port 8000
 # SSE — legacy HTTP transport
 python server.py --transport sse --port 8000
 ```
+
+## Agentic Resource Discovery (ARD)
+
+arrstack-mcp implements the **publisher** side of [Agentic Resource Discovery](https://agenticresourcediscovery.org/)
+([spec](https://github.com/ards-project/ard-spec)) — an open standard for
+publishing and discovering AI capabilities across the web. This lets ARD
+registries and agents find your server and learn how to connect to it, instead
+of every client needing a hand-written config.
+
+> [!IMPORTANT]
+> ARD publishes **discoverable metadata only**. It does *not* add authentication
+> to this server or make it safe to expose to the internet — the catalog just
+> describes what tools exist. The MCP endpoint still controls your media stack
+> with your credentials, so keep it behind Tailscale or an authenticated proxy
+> (see [Security](#security)). Discovery is not a substitute for verifying who
+> you connect to.
+
+When running an HTTP transport, the server publishes two documents, generated
+live from whatever `ENABLED_SERVICES` advertises:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/.well-known/ai-catalog.json` | The ARD **capability manifest**. Advertises this server as a single `application/mcp-server-card+json` entry with `capabilities` (the enabled tool names), `representativeQueries` for semantic search, and a domain-anchored `urn:air` identifier (plus an optional `did:web` identity, see below). |
+| `/.well-known/mcp-server-card.json` | The **MCP server card** the catalog references: every advertised tool with its `inputSchema`, plus the MCP endpoint and transport. |
+
+Both are served with `Content-Type: application/json`. When `ARD_PUBLIC_URL` is
+set (i.e. you've opted into public discovery), they also send
+`Access-Control-Allow-Origin: *` so browser-based crawlers can fetch them from
+any origin; on a private deployment that wildcard CORS header is omitted.
+Server-side crawlers ignore CORS and work either way.
+
+### Identity & trust
+
+The catalog entry's `identifier` is a **domain-anchored `urn:air` URN** — a
+stable *logical* name (e.g. `urn:air:arrstack.example.com:server:arrstack`); it
+does not need to resolve. A `did:web` host identity is **opt-in**: it's only
+emitted when you set `ARD_DID_WEB` to a domain whose root you control and where
+you host a [DID document](https://w3c-ccg.github.io/did-method-web/) at
+`/.well-known/did.json`. It is never inferred from `ARD_PUBLIC_URL`/`ARD_DOMAIN`,
+so the catalog never advertises an identity that can't be verified. This
+implementation does **not** include a cryptographic `trustManifest` (signing /
+attestations) — that's an optional, enterprise-grade layer of the spec.
+
+### Publishing
+
+1. Set `ARD_PUBLIC_URL` to the URL clients reach this server at, e.g.
+   `https://arrstack.example.com`. The catalog then advertises an absolute
+   connection endpoint (override the URN namespace with `ARD_DOMAIN`).
+2. Serve it over **HTTPS** on your public domain (a reverse proxy / Tailscale
+   Funnel / Cloudflare Tunnel in front of port `8000`).
+3. Check discovery works:
+
+   ```bash
+   curl https://arrstack.example.com/.well-known/ai-catalog.json
+   ```
+
+Startup logs print the discovery URL when ARD is enabled. Set `ARD_ENABLED=false`
+to turn the endpoints off.
+
+### Static hosting on GitHub Pages (no domain, no public server)
+
+You don't need a custom domain **or** a publicly exposed MCP server to publish a
+discoverable catalog — host it as a static file on GitHub Pages, anchored to the
+`github.io` domain you already control. This repo ships a workflow
+([`.github/workflows/ard-pages.yml`](.github/workflows/ard-pages.yml)) that
+regenerates the catalog from `server.py` on every change and deploys it, so it
+never goes stale.
+
+**Setup (one-time, ~2 minutes):**
+
+1. **Enable Pages:** repo **Settings → Pages → Build and deployment → Source:
+   "GitHub Actions"**.
+2. **Run it:** push to `main` (or **Actions → Publish ARD catalog → Run
+   workflow**). That's it — the catalog goes live at:
+
+   ```
+   https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
+   ```
+
+3. **Verify:**
+
+   ```bash
+   curl -L https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
+   ```
+
+With no configuration, the publisher identity defaults to your Pages domain —
+`urn:air:ct4nk3r.github.io:server:arrstack`. This matches the ARD spec's "solo
+developer" examples (which use identifiers like `urn:air:github.com:alice-dev:...`).
+GitHub Pages serves the file over HTTPS with `Content-Type: application/json` and
+`Access-Control-Allow-Origin: *`, satisfying the ARD hosting requirements, and
+the manifest embeds the full server card inline so it's self-contained.
+
+> [!NOTE]
+> The default identity is the `urn:air` URN only — a stable logical name, not a
+> resolvable address. A `did:web` identity is **not** advertised by default,
+> because a project Pages site (`<owner>.github.io/<repo>/`) can't host the
+> `did.json` at the `<owner>.github.io` root that `did:web` resolution expects.
+> Only set `ARD_DID_WEB` if you serve a DID document at that domain's root (e.g.
+> via a `<owner>.github.io` user site or a custom domain).
+
+**Optional repo variables** (Settings → Secrets and variables → Actions →
+Variables) let you override the defaults:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ARD_DOMAIN` | `<owner>.github.io` | `urn:air` publisher namespace (a logical name). Set this if you later get a custom domain. |
+| `ARD_PUBLIC_URL` | _(none)_ | Where your MCP server actually runs, advertised inside the card. Leave blank if it's private (e.g. Tailscale-only). |
+| `ARD_HOST_NAME` | `arrstack-mcp` | Friendly catalog host name. |
+| `ARD_DID_WEB` | _(none)_ | Opt-in `did:web` identity; only set for a domain whose root serves a `/.well-known/did.json`. |
+
+### Getting it indexed by registries
+
+Hosting makes the catalog _reachable_; registries still have to find it. Without
+a custom domain you have two routes:
+
+- **Direct fetch / manual submission (works now).** Any agent or registry you
+  give the URL above can fetch and index it immediately — the spec explicitly
+  supports bypassing search and fetching a known catalog directly. Many
+  registries also let you submit a catalog URL for crawling.
+- **Automatic `.well-known` discovery (optional, still no purchase).** Crawlers
+  that probe `https://<domain>/.well-known/ai-catalog.json` expect it at a domain
+  _root_. To get that for free, create a GitHub **user site** — a repo named
+  `ct4nk3r.github.io` — and host the same files there, so the catalog sits at
+  `https://ct4nk3r.github.io/.well-known/ai-catalog.json` (root, not a
+  subpath). Copy [`.github/workflows/ard-pages.yml`](.github/workflows/ard-pages.yml)
+  and [`server.py`](server.py)/[`ard.py`](ard.py) into that repo, or just commit
+  the generated `ai-catalog.json` from the manual command below.
+
+> [!TIP]
+> If you _do_ get a domain later, you can either add a [custom domain](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site)
+> to this Pages site (served at `https://<your-domain>/.well-known/ai-catalog.json`),
+> or keep hosting on `github.io` and add a DNS record on your domain:
+> `_catalog._agents.<your-domain>  TXT  "url=https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json"`.
+
+### Generating the files manually
+
+To host elsewhere (another repo, S3, a CDN, your own server), generate the
+documents yourself:
+
+```bash
+ARD_DOMAIN=ct4nk3r.github.io ARD_EMBED_CARD=true \
+  python server.py --print-catalog > ai-catalog.json
+ARD_DOMAIN=ct4nk3r.github.io \
+  python server.py --print-server-card > mcp-server-card.json
+```
+
+`ARD_EMBED_CARD=true` makes `--print-catalog` embed the server card inline so the
+manifest is self-contained (the default `auto` only embeds when `ARD_PUBLIC_URL`
+is unset). See [`examples/`](examples/) for sample output.
 
 ## Finding Your API Keys
 
