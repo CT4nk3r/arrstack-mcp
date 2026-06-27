@@ -5,12 +5,15 @@ name: Publish ARD catalog
 # catalog is always self-contained (ARD_EMBED_CARD=true) and re-published on
 # every change, so it never goes stale.
 #
-# REQUIRED one-time setup (see the README "Static hosting on GitHub Pages"):
-#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
-# Until you do this, the "Build ARD catalog" job still succeeds (it generates
-# and validates the catalog) but the "Deploy to GitHub Pages" job fails, because
-# the GITHUB_TOKEN cannot enable Pages for you. After enabling it, re-run the
-# workflow (Actions -> Publish ARD catalog -> Run workflow) and it goes green.
+# REQUIRED one-time setup to publish (see the README "Static hosting on GitHub
+# Pages" section):
+#   1. Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+#   2. Settings -> Secrets and variables -> Actions -> Variables:
+#        ARD_PAGES_ENABLED = true
+# The deploy job is gated on ARD_PAGES_ENABLED, so until you set it the workflow
+# stays green: the "Build ARD catalog" job still generates and validates the
+# catalog, and "Deploy to GitHub Pages" is skipped (the GITHUB_TOKEN cannot
+# enable Pages for you). After both steps, every change re-publishes the catalog.
 #
 # Optional repo variables (Settings -> Secrets and variables -> Actions -> Variables):
 #   ARD_DOMAIN      urn:air publisher namespace (defaults to <owner>.github.io)
@@ -99,6 +102,12 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    # Opt-in gate: the deploy can only work once Pages is enabled (Settings ->
+    # Pages -> Source: "GitHub Actions"), which the GITHUB_TOKEN can't do for
+    # you. Set the repo variable ARD_PAGES_ENABLED=true after enabling Pages.
+    # Until then this job is skipped, so the workflow stays green (the build job
+    # still generates and validates the catalog) instead of failing on deploy.
+    if: ${{ vars.ARD_PAGES_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

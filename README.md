@@ -393,18 +393,26 @@ never goes stale.
 
 1. **Enable Pages:** repo **Settings → Pages → Build and deployment → Source:
    "GitHub Actions"**.
-2. **Run it:** push to `main` (or **Actions → Publish ARD catalog → Run
-   workflow**). That's it — the catalog goes live at:
+2. **Flip the deploy gate on:** repo **Settings → Secrets and variables →
+   Actions → Variables**, add `ARD_PAGES_ENABLED` = `true`. (The deploy job is
+   skipped until you do this, so the workflow stays green beforehand — GitHub's
+   token can't enable Pages for you, so this is an explicit opt-in.)
+3. **Run it:** push to `main` (or **Actions → Publish ARD catalog → Run
+   workflow**). The catalog goes live at:
 
    ```
    https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
    ```
 
-3. **Verify:**
+4. **Verify:**
 
    ```bash
    curl -L https://ct4nk3r.github.io/arrstack-mcp/.well-known/ai-catalog.json
    ```
+
+Before you complete steps 1–2, the workflow still runs and stays green: the
+**Build ARD catalog** job generates and validates the catalog, and the deploy
+job is simply skipped.
 
 With no configuration, the publisher identity defaults to your Pages domain —
 `urn:air:ct4nk3r.github.io:server:arrstack`. This matches the ARD spec's "solo
