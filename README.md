@@ -337,8 +337,11 @@ live from whatever `ENABLED_SERVICES` advertises:
 | `/.well-known/ai-catalog.json` | The ARD **capability manifest**. Advertises this server as a single `application/mcp-server-card+json` entry with `capabilities` (the enabled tool names), `representativeQueries` for semantic search, and a `did:web` identity. |
 | `/.well-known/mcp-server-card.json` | The **MCP server card** the catalog references: every advertised tool with its `inputSchema`, plus the MCP endpoint and transport. |
 
-Both are served with `Content-Type: application/json` and
-`Access-Control-Allow-Origin: *` so crawlers can fetch them from any origin.
+Both are served with `Content-Type: application/json`. When `ARD_PUBLIC_URL` is
+set (i.e. you've opted into public discovery), they also send
+`Access-Control-Allow-Origin: *` so browser-based crawlers can fetch them from
+any origin; on a private deployment that wildcard CORS header is omitted.
+Server-side crawlers ignore CORS and work either way.
 
 ### Publishing
 

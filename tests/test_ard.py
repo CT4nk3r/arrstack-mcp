@@ -226,7 +226,8 @@ class WellKnownRouteTests(unittest.TestCase):
             ard.WELL_KNOWN_CATALOG_PATH, headers={"Host": "crawler.example.com"}
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers["content-type"], "application/json")
+        self.assertTrue(resp.headers["content-type"].startswith("application/json"))
+        # ARD_PUBLIC_URL is set (public discovery) -> permissive CORS is emitted.
         self.assertEqual(resp.headers["access-control-allow-origin"], "*")
         catalog = resp.json()
         self.assertEqual(ard.validate_catalog(catalog), [])
@@ -234,6 +235,16 @@ class WellKnownRouteTests(unittest.TestCase):
             catalog["entries"][0]["identifier"],
             "urn:air:arrstack.example.com:server:arrstack",
         )
+
+    def test_no_permissive_cors_when_not_publicly_published(self):
+        # On a private deployment (no ARD_PUBLIC_URL) the documents are still
+        # served, but without the wildcard CORS header that would let arbitrary
+        # browser JS read them cross-origin.
+        server.ARD_PUBLIC_URL = ""
+        client = TestClient(server.mcp.streamable_http_app())
+        resp = client.get(ard.WELL_KNOWN_CATALOG_PATH)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("access-control-allow-origin", resp.headers)
 
     def test_server_card_route_served(self):
         resp = self.client.get(ard.WELL_KNOWN_SERVER_CARD_PATH)

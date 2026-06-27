@@ -136,8 +136,7 @@ mcp = FastMCP(
 
 # ── Agentic Resource Discovery (ARD) endpoints ──
 # The catalog and server card are generated from the *enabled* tool set at
-# request time, so they always mirror what this server advertises. Crawlers
-# fetch these from any Host, so the routes set permissive CORS headers.
+# request time, so they always mirror what this server advertises.
 
 # HTTP transport this process is serving (set in main()); shapes the absolute
 # MCP endpoint URL advertised in the catalog/server card.
@@ -145,10 +144,21 @@ _active_transport = ard.DEFAULT_TRANSPORT
 
 _ARD_DISABLED_VALUES = {"false", "0", "no", "off", "disabled"}
 _ARD_TRUE_VALUES = {"true", "1", "yes", "on"}
-_ARD_RESPONSE_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Cache-Control": "public, max-age=300",
-}
+
+
+def _ard_response_headers() -> dict:
+    """Response headers for the well-known ARD documents.
+
+    The permissive ``Access-Control-Allow-Origin: *`` header is only emitted
+    when a public URL is configured (i.e. the operator has opted into public
+    discovery). On a private/LAN deployment we omit it so the documents can't be
+    read cross-origin by arbitrary browser JavaScript — server-side crawlers,
+    which ignore CORS, are unaffected either way.
+    """
+    headers = {"Cache-Control": "public, max-age=300"}
+    if ARD_PUBLIC_URL:
+        headers["Access-Control-Allow-Origin"] = "*"
+    return headers
 
 
 def _ard_disabled() -> bool:
@@ -214,7 +224,7 @@ async def _serve_ai_catalog(request):
     """Serve the ARD capability manifest (ai-catalog.json) for discovery."""
     if _ard_disabled():
         return Response(status_code=404)
-    return JSONResponse(_build_ard_catalog(updated_at=_now_iso()), headers=_ARD_RESPONSE_HEADERS)
+    return JSONResponse(_build_ard_catalog(updated_at=_now_iso()), headers=_ard_response_headers())
 
 
 @mcp.custom_route(ard.WELL_KNOWN_SERVER_CARD_PATH, methods=["GET"])
@@ -222,7 +232,7 @@ async def _serve_mcp_server_card(request):
     """Serve the MCP server card referenced by the catalog entry."""
     if _ard_disabled():
         return Response(status_code=404)
-    return JSONResponse(_build_ard_server_card(), headers=_ARD_RESPONSE_HEADERS)
+    return JSONResponse(_build_ard_server_card(), headers=_ard_response_headers())
 
 
 # ── HTTP helpers ──
