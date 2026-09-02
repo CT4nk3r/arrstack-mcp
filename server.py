@@ -317,10 +317,11 @@ def _lidarr(path: str, method: str = "GET", json=None, params=None):
 
 
 _qbt_sid = None
+_qbt_cookie_name = "SID"
 
 
 def _qbt(path: str, method: str = "GET", data=None, params=None, files=None, _retry: bool = False):
-    global _qbt_sid
+    global _qbt_sid, _qbt_cookie_name
     if not QBT_URL:
         return "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
     logger.info("qbt %s %s", method, path)
@@ -333,12 +334,23 @@ def _qbt(path: str, method: str = "GET", data=None, params=None, files=None, _re
             )
             login.raise_for_status()
             _qbt_sid = login.cookies.get("SID")
+            _qbt_cookie_name = "SID"
             if not _qbt_sid:
+                for k, v in login.cookies.items():
+                    if "SID" in k.upper():
+                        _qbt_sid = v
+                        _qbt_cookie_name = k
+                        break
+            if not _qbt_sid and (login.status_code in (200, 204) and ("Ok." in login.text or not login.text.strip())):
+                _qbt_sid = "BYPASS"
+                _qbt_cookie_name = None
+            elif not _qbt_sid:
                 return "qBittorrent login failed: no SID cookie returned."
+        cookies = {_qbt_cookie_name: _qbt_sid} if (_qbt_cookie_name and _qbt_sid != "BYPASS") else None
         r = httpx.request(
             method,
             f"{QBT_URL}/api/v2{path}",
-            cookies={"SID": _qbt_sid},
+            cookies=cookies,
             data=data,
             params=params,
             files=files,
@@ -1741,6 +1753,11 @@ def _qbt_add_result(result):
             return False, "qBittorrent returned an empty response."
         # _qbt returns plain-text error messages (not configured, HTTP errors, …).
         return False, text
+    if isinstance(result, dict):
+        if result.get("success_count", 0) > 0 or result.get("added_torrent_ids"):
+            return True, ""
+        if result.get("failure_count", 0) > 0:
+            return False, f"qBittorrent failed to add torrent: {result}"
     return False, str(result)
 
 
