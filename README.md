@@ -189,6 +189,9 @@ All configuration is done via environment variables:
 | `sonarr_set_quality_definition` | Change size limits for a quality tier |
 | `sonarr_list_custom_formats` | List custom formats |
 | `sonarr_set_quality_profile_qualities` | Enable/disable qualities or quality groups in a profile |
+| `sonarr_list_tags` | List tags with how many series use each |
+| `sonarr_list_series_by_tag` | List series carrying a tag (e.g. a Seerr requester tag) |
+| `sonarr_set_series_tags` | Add, remove or set tags (missing tags are created) |
 
 ### Radarr (Movies)
 
@@ -208,6 +211,9 @@ All configuration is done via environment variables:
 | `radarr_set_quality_definition` | Change size limits for a quality tier |
 | `radarr_list_custom_formats` | List custom formats |
 | `radarr_set_quality_profile_qualities` | Enable/disable qualities or quality groups in a profile |
+| `radarr_list_tags` | List tags with how many movies use each |
+| `radarr_list_movies_by_tag` | List movies carrying a tag (e.g. a Seerr requester tag) |
+| `radarr_set_movie_tags` | Add, remove or set tags (missing tags are created) |
 
 ### Lidarr (Music)
 
