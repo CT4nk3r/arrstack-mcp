@@ -7,6 +7,7 @@ search, add, and manage your media library.
 """
 
 import os
+import pathlib
 import re
 import sys
 import json
@@ -24,7 +25,9 @@ from starlette.responses import JSONResponse, Response
 
 import ard
 import config
+import discover
 import doctor
+import wizard
 
 # ── Configuration ──
 # Every setting is declared in config.py; values come from the environment,
@@ -761,17 +764,35 @@ def _print_service_status(value: str | None = None) -> None:
         print(f"  {key:12} {state:8} {configured:14} {count:2} tools  ({name})")
 
 
-def _run_setup() -> None:
-    """Interactively build an ENABLED_SERVICES value without touching existing files."""
-    chosen = []
-    print("Choose which service toolsets this MCP server should advertise.")
-    for key, (name, url, _) in SERVICE_CONFIG.items():
-        default = "Y" if url else "N"
-        answer = input(f"Enable {name}? [{default}] ").strip().lower()
-        if answer == "y" or (not answer and default == "Y"):
-            chosen.append(key)
-    print("\nAdd this to your .env or Docker environment:")
-    print(f"ENABLED_SERVICES={','.join(chosen)}")
+def _run_setup(output: str | None, fmt: str, use_discovery: bool, arr_config_dirs, timeout: float) -> int:
+    """--setup: interactive wizard that tests each service and writes a config file."""
+    if CONFIG_PROBLEMS:
+        print(_format_config_problems() + "\n(continuing; the wizard will ask for these values)\n")
+    found = {}
+    if use_discovery or arr_config_dirs:
+        print("Looking for services (known container names and localhost only)...")
+        found = discover.discover(arr_config_dirs, network=use_discovery)
+    # Only a TOML run defaults to the --config file; never write env text into it.
+    default = (_CONFIG.path or "arrstack.toml") if fmt == "toml" else ".env"
+    path = pathlib.Path(output or default)
+    try:
+        result = wizard.run_setup(_CONFIG, path, fmt, discovered=found, timeout=timeout)
+    except (KeyboardInterrupt, EOFError):
+        print("\nSetup cancelled; nothing written.")
+        return 1
+    return 0 if result else 1
+
+
+def _run_discover(arr_config_dirs, timeout: float) -> int:
+    """--discover: list services found on the network / in *arr config files."""
+    found = discover.discover(arr_config_dirs, network=True, timeout=timeout)
+    if not found:
+        print("No services found at the usual container names or on localhost.")
+        return 1
+    for item in found.values():
+        print(f"  • {item.describe()}")
+    print("\nRun `python server.py --setup --discover` to configure them interactively.")
+    return 0
 
 
 def _sab(mode: str, **params):
@@ -3509,7 +3530,32 @@ def main():
     parser.add_argument(
         "--setup",
         action="store_true",
-        help="Interactively generate an ENABLED_SERVICES setting, then exit",
+        help="Interactive wizard: enter and test each service, write a private config file, "
+        "print MCP client snippets",
+    )
+    parser.add_argument(
+        "--output",
+        metavar="PATH",
+        help="With --setup: file to write (default: the --config file, else arrstack.toml or .env)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["toml", "env"],
+        default="toml",
+        help="With --setup: write a TOML config file (default) or a Docker env file",
+    )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Look for services at their usual container names and on localhost "
+        "(alone: list them; with --setup: use them as defaults)",
+    )
+    parser.add_argument(
+        "--arr-config",
+        metavar="DIR",
+        action="append",
+        default=[],
+        help="Read URL base, port and API key from an *arr config.xml in DIR (repeatable)",
     )
     parser.add_argument(
         "--check",
@@ -3550,6 +3596,10 @@ def main():
         return
     if args.check:
         sys.exit(_run_check(as_json=args.json, timeout=args.timeout))
+    if args.setup:
+        sys.exit(_run_setup(args.output, args.format, args.discover, args.arr_config, args.timeout))
+    if args.discover:
+        sys.exit(_run_discover(args.arr_config, min(args.timeout, discover.DEFAULT_TIMEOUT)))
     if CONFIG_PROBLEMS:
         parser.error(_format_config_problems())
 
@@ -3557,9 +3607,6 @@ def main():
         _instruction_presets(INSTRUCTION_PRESETS)
         if args.list_services:
             _print_service_status()
-            return
-        if args.setup:
-            _run_setup()
             return
         if args.print_catalog or args.print_server_card:
             _configure_service_tools()

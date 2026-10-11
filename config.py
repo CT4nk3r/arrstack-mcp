@@ -394,7 +394,7 @@ def _file_values(data: dict, path: str, problems: list[str]) -> dict[str, tuple[
     return result
 
 
-def _url_problem(setting: Setting, value: str) -> str | None:
+def url_problem(setting: Setting, value: str) -> str | None:
     parsed = urlparse(value)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         hint = " (missing http:// ?)" if "://" not in value else ""
@@ -424,7 +424,7 @@ def load(environ: Mapping[str, str], path: str | None = None) -> LoadedConfig:
         if setting.url:
             value = value.strip().rstrip("/")
             if value:
-                problem = _url_problem(setting, value)
+                problem = url_problem(setting, value)
                 if problem:
                     problems.append(problem)
         values[setting.env] = value
