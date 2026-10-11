@@ -10,4 +10,6 @@ USER appuser
 
 EXPOSE 8000
 ENTRYPOINT ["python", "server.py"]
-CMD ["--transport", "sse"]
+# Streamable HTTP at http://<host>:8000/mcp (matches the README). Override with
+# `--transport sse` for legacy clients that only speak SSE (endpoint /sse).
+CMD ["--transport", "streamable-http"]

@@ -3,7 +3,12 @@ services:
     build: .
     container_name: arrstack-mcp
     ports:
-      - "8000:8000"
+      # Published on localhost only: this server has no authentication, and
+      # anyone who can reach the port can add or delete downloads. Containers on
+      # the same Docker network reach it at http://arrstack-mcp:8000/mcp without
+      # this mapping. To reach it from another machine, put it behind Tailscale
+      # or an authenticated reverse proxy rather than changing this to 0.0.0.0.
+      - "127.0.0.1:8000:8000"
     environment:
       - ENABLED_SERVICES=auto
       # ── Sonarr ──

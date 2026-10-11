@@ -259,61 +259,57 @@ def _http_error(service: str, error: Exception) -> str:
     return f"{service} request error: {error}"
 
 
-def _sonarr(path: str, method: str = "GET", json=None, params=None):
-    if not SONARR_URL:
-        return "Sonarr is not configured. Set SONARR_URL and SONARR_API_KEY."
-    logger.info("sonarr %s %s", method, path)
+def _decode_json(service: str, r):
+    """Decode a JSON response body.
+
+    An empty body (common for DELETE and some command endpoints) decodes to an
+    empty dict so callers treat it as success. A non-empty, non-JSON body (an
+    HTML login page, a proxy error, ...) becomes a readable error string.
+    """
+    try:
+        return r.json()
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
+        if not (r.text or "").strip():
+            return {}
+        logger.error("%s returned non-JSON response (HTTP %s)", service, r.status_code)
+        return f"{service} returned a non-JSON response (HTTP {r.status_code})."
+
+
+def _arr_request(service, base_url, api_path, api_key, path, method="GET", json=None, params=None):
+    """Shared request helper for the *arr family (X-Api-Key auth, JSON API)."""
+    logger.info("%s %s %s", service, method, path)
+    headers = {"X-Api-Key": api_key} if api_key else {}
     try:
         r = httpx.request(
             method,
-            f"{SONARR_URL}/api/v3{path}",
-            headers={"X-Api-Key": SONARR_API_KEY},
+            f"{base_url}{api_path}{path}",
+            headers=headers,
             json=json,
             params=params,
             timeout=30,
         )
         r.raise_for_status()
-        return r.json()
+        return _decode_json(service, r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("sonarr", error)
+        return _http_error(service, error)
+
+
+def _sonarr(path: str, method: str = "GET", json=None, params=None):
+    if not SONARR_URL:
+        return "Sonarr is not configured. Set SONARR_URL and SONARR_API_KEY."
+    return _arr_request("sonarr", SONARR_URL, "/api/v3", SONARR_API_KEY, path, method, json, params)
 
 
 def _radarr(path: str, method: str = "GET", json=None, params=None):
     if not RADARR_URL:
         return "Radarr is not configured. Set RADARR_URL and RADARR_API_KEY."
-    logger.info("radarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{RADARR_URL}/api/v3{path}",
-            headers={"X-Api-Key": RADARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("radarr", error)
+    return _arr_request("radarr", RADARR_URL, "/api/v3", RADARR_API_KEY, path, method, json, params)
 
 
 def _lidarr(path: str, method: str = "GET", json=None, params=None):
     if not LIDARR_URL:
         return "Lidarr is not configured. Set LIDARR_URL and LIDARR_API_KEY."
-    logger.info("lidarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{LIDARR_URL}/api/v1{path}",
-            headers={"X-Api-Key": LIDARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        return _http_error("lidarr", e)
+    return _arr_request("lidarr", LIDARR_URL, "/api/v1", LIDARR_API_KEY, path, method, json, params)
 
 
 _qbt_sid = None
@@ -364,7 +360,7 @@ def _qbt(path: str, method: str = "GET", data=None, params=None, files=None, _re
         r.raise_for_status()
         try:
             return r.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("qBittorrent", error)
@@ -417,7 +413,7 @@ def _rdt(path: str, method: str = "GET", data=None, params=None, _retry: bool = 
         r.raise_for_status()
         try:
             return r.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return _http_error("rdt", e)
@@ -447,7 +443,7 @@ def _rdt_native(path: str, method: str = "GET", json=None, params=None):
         r.raise_for_status()
         try:
             return r.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return _http_error("rdt-native", e)
@@ -463,7 +459,7 @@ def _jellyfin(path: str, params=None):
     try:
         r = httpx.get(f"{JELLYFIN_URL}{path}", headers=headers, params=params, timeout=30)
         r.raise_for_status()
-        return r.json()
+        return _decode_json("jellyfin", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("jellyfin", error)
 
@@ -471,20 +467,7 @@ def _jellyfin(path: str, params=None):
 def _prowlarr(path: str, method: str = "GET", json=None, params=None):
     if not PROWLARR_URL:
         return "Prowlarr is not configured. Set PROWLARR_URL and PROWLARR_API_KEY."
-    logger.info("prowlarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{PROWLARR_URL}/api/v1{path}",
-            headers={"X-Api-Key": PROWLARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("prowlarr", error)
+    return _arr_request("prowlarr", PROWLARR_URL, "/api/v1", PROWLARR_API_KEY, path, method, json, params)
 
 
 def _romm(path: str, method: str = "GET", params=None, json=None, public: bool = False):
@@ -515,7 +498,7 @@ def _romm(path: str, method: str = "GET", params=None, json=None, public: bool =
             timeout=30,
         )
         r.raise_for_status()
-        return r.json()
+        return _decode_json("RomM", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("RomM", error)
 
@@ -536,7 +519,7 @@ def _gamevault(path: str, method: str = "GET", params=None):
             timeout=30,
         )
         r.raise_for_status()
-        return r.json()
+        return _decode_json("GameVault", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("GameVault", error)
 
@@ -622,7 +605,7 @@ def _sab(mode: str, **params):
                 query[k] = v
         r = httpx.get(f"{SAB_URL}/sabnzbd/api", params=query, timeout=30)
         r.raise_for_status()
-        return r.json()
+        return _decode_json("sab", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return _http_error("sab", e)
 
@@ -631,26 +614,7 @@ def _bookshelf(path: str, method: str = "GET", json=None, params=None):
     """HTTP helper for Bookshelf (a Hardcover-flavored Readarr fork; Readarr v1 API)."""
     if not BOOKSHELF_URL:
         return "Bookshelf is not configured. Set BOOKSHELF_URL (and BOOKSHELF_API_KEY)."
-    logger.info("bookshelf %s %s", method, path)
-    headers = {}
-    if BOOKSHELF_API_KEY:
-        headers["X-Api-Key"] = BOOKSHELF_API_KEY
-    try:
-        r = httpx.request(
-            method,
-            f"{BOOKSHELF_URL}/api/v1{path}",
-            headers=headers,
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        try:
-            return r.json()
-        except (ValueError, json.JSONDecodeError):
-            return r.text
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        return _http_error("bookshelf", e)
+    return _arr_request("bookshelf", BOOKSHELF_URL, "/api/v1", BOOKSHELF_API_KEY, path, method, json, params)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -788,7 +752,7 @@ def sonarr_upcoming(days: int = 7) -> str:
         series = ep.get("series", {}).get("title", "?")
         s_num = ep.get("seasonNumber", 0)
         e_num = ep.get("episodeNumber", 0)
-        air = ep.get("airDateUtc", "?")[:10]
+        air = (ep.get("airDateUtc") or "?")[:10]
         title = ep.get("title", "")
         lines.append(f"• {series} S{s_num:02d}E{e_num:02d} \"{title}\" — {air}")
     return "\n".join(lines) or "Nothing upcoming."
@@ -925,17 +889,38 @@ def sonarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
     """
     if queue_id <= 0:
         return "Invalid queue_id."
-    try:
-        r = httpx.delete(
-            f"{SONARR_URL}/api/v3/queue/{queue_id}",
-            headers={"X-Api-Key": SONARR_API_KEY},
-            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
-            timeout=30,
+    result = _sonarr(
+        f"/queue/{queue_id}",
+        method="DELETE",
+        params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to remove queue item: {result}"
+    return "✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
+
+
+@mcp.tool()
+def sonarr_list_episode_files(series_id: int, season: int = -1) -> str:
+    """List downloaded episode files for a series, with the file IDs used by sonarr_delete_episode_file.
+
+    Args:
+        series_id: Sonarr series ID (use sonarr_list_series to find it).
+        season: Only show this season number (-1 for all seasons).
+    """
+    if series_id <= 0:
+        return "Invalid series_id."
+    data = _sonarr("/episodefile", params={"seriesId": series_id})
+    if isinstance(data, str):
+        return data
+    files = [f for f in data if season < 0 or f.get("seasonNumber") == season]
+    lines = []
+    for f in sorted(files, key=lambda x: (x.get("seasonNumber", 0), x.get("relativePath") or "")):
+        quality = ((f.get("quality") or {}).get("quality") or {}).get("name", "?")
+        lines.append(
+            f"• [fileId: {f.get('id', '?')}] S{f.get('seasonNumber', 0):02d} "
+            f"{f.get('relativePath', '?')} — {quality}, {_format_size(f.get('size'))}"
         )
-        r.raise_for_status()
-        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("sonarr", error)
+    return "\n".join(lines) or "No episode files found."
 
 
 @mcp.tool()
@@ -944,20 +929,14 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
     This allows Sonarr to re-search and download a new version.
 
     Args:
-        episode_file_id: Episode file ID (use sonarr_get_series to find file IDs).
+        episode_file_id: Episode file ID (use sonarr_list_episode_files to find it).
     """
     if episode_file_id <= 0:
         return "Invalid episode_file_id."
-    try:
-        r = httpx.delete(
-            f"{SONARR_URL}/api/v3/episodefile/{episode_file_id}",
-            headers={"X-Api-Key": SONARR_API_KEY},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("sonarr", error)
+    result = _sonarr(f"/episodefile/{episode_file_id}", method="DELETE")
+    if isinstance(result, str):
+        return f"❌ Failed to delete episode file: {result}"
+    return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
 
 
 @mcp.tool()
@@ -1000,13 +979,10 @@ def sonarr_update_series(series_id: int, quality_profile_id: int = -1, monitored
         changes.append(f"monitored → {bool(monitored)}")
     if not changes:
         return "No changes specified."
-    try:
-        result = _sonarr(f"/series/{series_id}", method="PUT", json=series)
-        if isinstance(result, dict):
-            return f"✅ Updated '{result['title']}': {', '.join(changes)}"
-        return str(result)
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    result = _sonarr(f"/series/{series_id}", method="PUT", json=series)
+    if isinstance(result, dict):
+        return f"✅ Updated '{result.get('title', '?')}': {', '.join(changes)}"
+    return f"❌ Failed: {result}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1248,17 +1224,14 @@ def radarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
     """
     if queue_id <= 0:
         return "Invalid queue_id."
-    try:
-        r = httpx.delete(
-            f"{RADARR_URL}/api/v3/queue/{queue_id}",
-            headers={"X-Api-Key": RADARR_API_KEY},
-            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("radarr", error)
+    result = _radarr(
+        f"/queue/{queue_id}",
+        method="DELETE",
+        params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to remove queue item: {result}"
+    return "✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
 
 
 @mcp.tool()
@@ -1278,16 +1251,10 @@ def radarr_delete_movie_file(movie_id: int) -> str:
     if not movie_file:
         return f"Movie '{movie.get('title', '?')}' has no file to delete."
     fid = movie_file.get("id")
-    try:
-        r = httpx.delete(
-            f"{RADARR_URL}/api/v3/moviefile/{fid}",
-            headers={"X-Api-Key": RADARR_API_KEY},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Deleted file for '{movie['title']}' (file id: {fid}). Movie is now marked as missing."
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("radarr", error)
+    result = _radarr(f"/moviefile/{fid}", method="DELETE")
+    if isinstance(result, str):
+        return f"❌ Failed to delete movie file: {result}"
+    return f"✅ Deleted file for '{movie.get('title', '?')}' (file id: {fid}). Movie is now marked as missing."
 
 
 @mcp.tool()
@@ -1313,13 +1280,10 @@ def radarr_update_movie(movie_id: int, quality_profile_id: int = -1, monitored: 
         changes.append(f"monitored → {bool(monitored)}")
     if not changes:
         return "No changes specified."
-    try:
-        result = _radarr(f"/movie/{movie_id}", method="PUT", json=movie)
-        if isinstance(result, dict):
-            return f"✅ Updated '{result['title']}': {', '.join(changes)}"
-        return str(result)
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    result = _radarr(f"/movie/{movie_id}", method="PUT", json=movie)
+    if isinstance(result, dict):
+        return f"✅ Updated '{result.get('title', '?')}': {', '.join(changes)}"
+    return f"❌ Failed: {result}"
 
 
 @mcp.tool()
@@ -1327,17 +1291,20 @@ def radarr_search_missing(movie_ids: str = "") -> str:
     """Trigger a search for missing movies in Radarr.
 
     Args:
-        movie_ids: Comma-separated Radarr movie IDs to search. Leave empty to search ALL missing movies.
+        movie_ids: Comma-separated Radarr movie IDs to search. Leave empty to search all
+            monitored movies that are missing (Radarr's own "Search All Missing").
     """
-    if movie_ids:
-        ids = [int(x.strip()) for x in movie_ids.split(",")]
-    else:
-        movies = _radarr("/movie")
-        if isinstance(movies, str):
-            return movies
-        ids = [m["id"] for m in movies if not m.get("hasFile")]
-        if not ids:
-            return "All movies have files — nothing to search."
+    if not movie_ids.strip():
+        result = _radarr("/command", method="POST", json={"name": "MissingMoviesSearch"})
+        if isinstance(result, dict):
+            return "🔍 Search triggered for all monitored missing movies."
+        return str(result)
+    try:
+        ids = [int(x) for x in (part.strip() for part in movie_ids.split(",")) if x]
+    except ValueError:
+        return "Invalid movie_ids: use comma-separated numeric Radarr IDs, e.g. \"12,34\"."
+    if not ids or any(i <= 0 for i in ids):
+        return "Invalid movie_ids: use comma-separated numeric Radarr IDs, e.g. \"12,34\"."
     result = _radarr("/command", method="POST", json={"name": "MoviesSearch", "movieIds": ids})
     if isinstance(result, dict):
         return f"🔍 Search triggered for {len(ids)} movie(s)."
@@ -1535,17 +1502,14 @@ def lidarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
     """
     if queue_id <= 0:
         return "Invalid queue_id."
-    try:
-        r = httpx.delete(
-            f"{LIDARR_URL}/api/v1/queue/{queue_id}",
-            headers={"X-Api-Key": LIDARR_API_KEY},
-            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    result = _lidarr(
+        f"/queue/{queue_id}",
+        method="DELETE",
+        params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to remove queue item: {result}"
+    return "✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
 
 
 @mcp.tool()
@@ -1587,8 +1551,11 @@ def prowlarr_test_indexer(indexer_id: int) -> str:
     """
     if indexer_id <= 0:
         return "Invalid indexer_id."
-    result = _prowlarr(f"/indexer/{indexer_id}/test", method="POST")
-    if isinstance(result, str) and result.startswith("prowlarr request"):
+    indexer = _prowlarr(f"/indexer/{indexer_id}")
+    if isinstance(indexer, str):
+        return f"❌ Indexer test failed: {indexer}"
+    result = _prowlarr("/indexer/test", method="POST", json=indexer, params={"forceTest": "true"})
+    if isinstance(result, str):
         return f"❌ Indexer test failed: {result}"
     return "✅ Indexer test passed."
 
@@ -1603,8 +1570,8 @@ def prowlarr_test_all_indexers() -> str:
     for idx in data:
         if not idx.get("enable"):
             continue
-        result = _prowlarr(f"/indexer/{idx['id']}/test", method="POST")
-        if isinstance(result, str) and result.startswith("prowlarr request"):
+        result = _prowlarr("/indexer/test", method="POST", json=idx, params={"forceTest": "true"})
+        if isinstance(result, str):
             results.append(f"❌ {idx['name']} — {result}")
         else:
             results.append(f"✅ {idx['name']} — OK")
@@ -1791,8 +1758,7 @@ def _looks_like_torrent(content):
     """
     if not content or content[:1] != b"d":
         return False
-    head = content[:65536]
-    return b"4:info" in head or b"announce" in head
+    return b"4:info" in content
 
 
 def _decode_b64_torrent(text):
@@ -1925,7 +1891,10 @@ def _qbt_resolve_source(source):
         return "magnet", src
     if low.startswith(("http://", "https://")):
         return _qbt_fetch_torrent(src)
-    if os.path.isfile(src):
+    # Only files named *.torrent are read from the server's disk. Anything else
+    # falls through to the generic "unrecognized" error, so this tool can't be
+    # used to read arbitrary files or to probe which paths exist on the host.
+    if low.endswith(".torrent") and os.path.isfile(src):
         try:
             with open(src, "rb") as fh:
                 content = fh.read()
@@ -2076,15 +2045,44 @@ def qbt_add_torrent_file(source: str, category: str = "", save_path: str = "", p
     return _qbt_add_source(source, category=category, save_path=save_path, paused=paused)
 
 
+def _action_ok(result) -> bool:
+    """True when a qBittorrent-style action call succeeded.
+
+    Action endpoints answer with an empty body or "Ok." on success; the
+    request helpers return a non-empty message string on any failure
+    (not configured, login/auth failure, HTTP error, ...).
+    """
+    if isinstance(result, str):
+        text = result.strip()
+        return text == "" or text.lower() == "ok."
+    return True
+
+
+def _qbt_action(path: str, legacy_path: str, data: dict):
+    """POST a qBittorrent action, falling back to the pre-5.0 endpoint name.
+
+    qBittorrent 5.x renamed /torrents/pause|resume to /torrents/stop|start;
+    4.x answers the new names with 404.
+    """
+    result = _qbt(path, method="POST", data=data)
+    if not _action_ok(result) and isinstance(result, str) and "HTTP 404" in result:
+        result = _qbt(legacy_path, method="POST", data=data)
+    return result
+
+
 @mcp.tool()
 def qbt_pause(torrent_hash: str) -> str:
     """Pause a torrent. Use 'all' to pause everything.
 
     Args:
-        torrent_hash: Hash of the torrent, or "all" to pause all.
+        torrent_hash: Hash of the torrent, "hash1|hash2", or "all" to pause all.
     """
-    _qbt("/torrents/stop", method="POST", data={"hashes": torrent_hash})
-    return "⏸️ Paused."
+    if not torrent_hash.strip():
+        return "❌ No torrent hash given."
+    result = _qbt_action("/torrents/stop", "/torrents/pause", {"hashes": torrent_hash.strip()})
+    if _action_ok(result):
+        return "⏸️ Paused."
+    return f"❌ Pause failed: {result}"
 
 
 @mcp.tool()
@@ -2092,10 +2090,14 @@ def qbt_resume(torrent_hash: str) -> str:
     """Resume a torrent. Use 'all' to resume everything.
 
     Args:
-        torrent_hash: Hash of the torrent, or "all" to resume all.
+        torrent_hash: Hash of the torrent, "hash1|hash2", or "all" to resume all.
     """
-    _qbt("/torrents/start", method="POST", data={"hashes": torrent_hash})
-    return "▶️ Resumed."
+    if not torrent_hash.strip():
+        return "❌ No torrent hash given."
+    result = _qbt_action("/torrents/start", "/torrents/resume", {"hashes": torrent_hash.strip()})
+    if _action_ok(result):
+        return "▶️ Resumed."
+    return f"❌ Resume failed: {result}"
 
 
 @mcp.tool()
@@ -2103,14 +2105,18 @@ def qbt_delete(torrent_hash: str, delete_files: bool = False) -> str:
     """Delete a torrent from qBittorrent.
 
     Args:
-        torrent_hash: Hash of the torrent to delete.
+        torrent_hash: Hash of the torrent to delete (or "hash1|hash2").
         delete_files: If True, also delete downloaded files from disk.
     """
-    _qbt(
+    if not torrent_hash.strip():
+        return "❌ No torrent hash given."
+    result = _qbt(
         "/torrents/delete",
         method="POST",
-        data={"hashes": torrent_hash, "deleteFiles": str(delete_files).lower()},
+        data={"hashes": torrent_hash.strip(), "deleteFiles": str(delete_files).lower()},
     )
+    if not _action_ok(result):
+        return f"❌ Delete failed: {result}"
     return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
 
 
@@ -2202,10 +2208,27 @@ def rdt_add_magnet(magnet: str, category: str = "") -> str:
         magnet: The magnet URI to add.
         category: Optional category to assign (e.g. "tv", "movies").
     """
-    result = _rdt("/torrents/add", method="POST", data={"urls": magnet, "category": category})
-    if isinstance(result, str) and result.strip() == "Ok.":
+    magnet = magnet.strip()
+    if not magnet.lower().startswith("magnet:"):
+        return "❌ That doesn't look like a magnet link (it must start with 'magnet:')."
+    data = {"urls": magnet}
+    if category:
+        data["category"] = category
+    result = _rdt("/torrents/add", method="POST", data=data)
+    if _action_ok(result):
         return "✅ Torrent added to RDTClient."
-    return f"Result: {result}"
+    return f"❌ Failed to add to RDTClient: {result}"
+
+
+def _rdt_simple_action(path: str, torrent_hashes: str, success: str, verb: str, extra=None) -> str:
+    if not torrent_hashes.strip():
+        return "❌ No torrent hash given."
+    data = {"hashes": torrent_hashes.strip()}
+    data.update(extra or {})
+    result = _rdt(path, method="POST", data=data)
+    if _action_ok(result):
+        return success
+    return f"❌ {verb} failed: {result}"
 
 
 @mcp.tool()
@@ -2215,8 +2238,7 @@ def rdt_pause(torrent_hashes: str) -> str:
     Args:
         torrent_hashes: Hash, "hash1|hash2", or "all".
     """
-    _rdt("/torrents/pause", method="POST", data={"hashes": torrent_hashes})
-    return "⏸️ Paused."
+    return _rdt_simple_action("/torrents/pause", torrent_hashes, "⏸️ Paused.", "Pause")
 
 
 @mcp.tool()
@@ -2226,8 +2248,7 @@ def rdt_resume(torrent_hashes: str) -> str:
     Args:
         torrent_hashes: Hash, "hash1|hash2", or "all".
     """
-    _rdt("/torrents/resume", method="POST", data={"hashes": torrent_hashes})
-    return "▶️ Resumed."
+    return _rdt_simple_action("/torrents/resume", torrent_hashes, "▶️ Resumed.", "Resume")
 
 
 @mcp.tool()
@@ -2238,12 +2259,14 @@ def rdt_delete(torrent_hashes: str, delete_files: bool = False) -> str:
         torrent_hashes: Hash, "hash1|hash2", or "all".
         delete_files: If True, also delete downloaded files from disk.
     """
-    _rdt(
+    success = "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
+    return _rdt_simple_action(
         "/torrents/delete",
-        method="POST",
-        data={"hashes": torrent_hashes, "deleteFiles": str(delete_files).lower()},
+        torrent_hashes,
+        success,
+        "Delete",
+        {"deleteFiles": str(delete_files).lower()},
     )
-    return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
 
 
 @mcp.tool()

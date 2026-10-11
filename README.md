@@ -111,7 +111,7 @@ services:
     build: .
     container_name: arrstack-mcp
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # localhost only — see Security below
     environment:
       - SONARR_URL=http://sonarr:8989
       - SONARR_API_KEY=your-key
@@ -179,6 +179,15 @@ All configuration is done via environment variables:
 | `sonarr_add_series` | Add a show by TVDB ID |
 | `sonarr_upcoming` | Show upcoming episodes |
 | `sonarr_queue` | Show current download queue |
+| `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
+| `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
+| `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
+| `sonarr_search_missing` | Search missing episodes for one series or all |
+| `sonarr_update_series` | Change a series' quality profile or monitored status |
+| `sonarr_list_quality_profiles` | List quality profiles |
+| `sonarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
+| `sonarr_set_quality_definition` | Change size limits for a quality tier |
+| `sonarr_list_custom_formats` | List custom formats |
 
 ### Radarr (Movies)
 
@@ -189,6 +198,14 @@ All configuration is done via environment variables:
 | `radarr_search` | Search for new movies to add |
 | `radarr_add_movie` | Add a movie by TMDB ID |
 | `radarr_queue` | Show current download queue |
+| `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
+| `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
+| `radarr_search_missing` | Search specific movies, or all monitored missing movies |
+| `radarr_update_movie` | Change a movie's quality profile or monitored status |
+| `radarr_list_quality_profiles` | List quality profiles |
+| `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
+| `radarr_set_quality_definition` | Change size limits for a quality tier |
+| `radarr_list_custom_formats` | List custom formats |
 
 ### Lidarr (Music)
 
@@ -214,6 +231,7 @@ All configuration is done via environment variables:
 | `prowlarr_test_indexer` | Test a specific indexer connection |
 | `prowlarr_test_all_indexers` | Test all enabled indexers |
 | `prowlarr_search` | Search across indexers for releases |
+| `prowlarr_grab` | Send a result from the last search to qBittorrent |
 | `prowlarr_health` | Check system health warnings |
 
 ### qBittorrent (Downloads)
@@ -268,6 +286,7 @@ API, so it slots into Sonarr/Radarr just like qBt.
 | `jellyfin_libraries` | List media libraries |
 | `jellyfin_recent` | Recently added items |
 | `jellyfin_system_info` | Server version and system info |
+| `jellyfin_scan_library` | Trigger a library scan (needs `JELLYFIN_API_KEY`) |
 
 ### RomM (ROM Library)
 
@@ -501,6 +520,11 @@ provide authentication by itself. Anyone who can reach that port can invoke
 tools using the configured service credentials.
 
 - Prefer stdio for same-machine clients.
+- The bundled `docker-compose.yml` publishes port `8000` on `127.0.0.1` only.
+  Other containers on the same Docker network can still reach it by name.
+- `qbt_add` / `qbt_add_torrent_file` only read local files whose names end in
+  `.torrent`. They will still fetch any http(s) URL you (or the model) give them,
+  including hosts on your LAN, because Prowlarr download links live there.
 - For remote access, restrict port `8000` to Tailscale or place it behind an
   authenticated reverse proxy.
 - DNS-rebinding protection is enabled. Set `MCP_ALLOWED_HOSTS` to the exact
