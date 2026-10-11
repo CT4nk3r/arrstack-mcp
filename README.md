@@ -23,6 +23,7 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 | **RomM** | System info, list platforms, list/search ROMs, game details |
 | **GameVault** | List/search PC games, game details, random game, reindex library |
 | **Bookshelf** | List/search authors & books, queue, missing, profiles, health |
+| **Seerr** | Search movies/TV, request media (with season selection), list/check requests |
 
 Only configure the services you use — unconfigured services are gracefully skipped.
 
@@ -39,8 +40,8 @@ advertised tool catalog is configurable:
   resulting `ENABLED_SERVICES` line.
 
 Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
-`qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`, and
-`bookshelf`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
+`qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`,
+`bookshelf`, and `seerr`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
 
 ## Quick Start
 
@@ -166,6 +167,8 @@ All configuration is done via environment variables:
 | `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
 | `BOOKSHELF_API_KEY` | If Bookshelf | Bookshelf API key (Settings → General) |
+| `SEERR_URL` | No | Seerr / Overseerr / Jellyseerr base URL (e.g. `http://localhost:5055`) |
+| `SEERR_API_KEY` | If Seerr | Seerr API key (Settings → General) |
 
 ## Available Tools
 
@@ -295,6 +298,20 @@ API, so it slots into Sonarr/Radarr just like qBt.
 | `jellyfin_recent` | Recently added items |
 | `jellyfin_system_info` | Server version and system info |
 | `jellyfin_scan_library` | Trigger a library scan (needs `JELLYFIN_API_KEY`) |
+
+### Seerr (Media Requests)
+
+Seerr (and its predecessors Overseerr /
+Jellyseerr) lets household members request media; approved requests flow into
+Sonarr/Radarr.
+
+| Tool | Description |
+|------|-------------|
+| `seerr_search` | Search movies and TV shows, returns TMDB IDs |
+| `seerr_request_movie` | Request a movie by TMDB ID |
+| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection |
+| `seerr_list_requests` | List requests, filterable by status |
+| `seerr_request_status` | Get the status of a specific request |
 
 ### RomM (ROM Library)
 
@@ -520,6 +537,7 @@ is unset). See [`examples/`](examples/) for sample output.
 - **RomM**: User profile → API Tokens, or configure `ROMM_USER` and `ROMM_PASS`
 - **GameVault**: Admin panel → API Keys
 - **Bookshelf**: Settings → General → API Key (same as Readarr)
+- **Seerr**: Settings → General → API Key
 
 ## Security
 

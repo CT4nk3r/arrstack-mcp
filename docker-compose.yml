@@ -55,6 +55,9 @@ services:
       # ── Bookshelf (Hardcover-flavored Readarr fork) ──
       - BOOKSHELF_URL=http://bookshelf:8787
       - BOOKSHELF_API_KEY=your-bookshelf-api-key
+      # ── Seerr (media requests: Overseerr / Jellyseerr) ──
+      - SEERR_URL=http://seerr:5055
+      - SEERR_API_KEY=your-seerr-api-key
     restart: unless-stopped
     # Put this on the same Docker network as your *arr stack:
     # networks:

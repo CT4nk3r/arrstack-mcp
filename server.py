@@ -64,6 +64,8 @@ SAB_URL = os.environ.get("SAB_URL", "").rstrip("/")
 SAB_API_KEY = os.environ.get("SAB_API_KEY", "")
 BOOKSHELF_URL = os.environ.get("BOOKSHELF_URL", "").rstrip("/")
 BOOKSHELF_API_KEY = os.environ.get("BOOKSHELF_API_KEY", "")
+SEERR_URL = os.environ.get("SEERR_URL", "").rstrip("/")
+SEERR_API_KEY = os.environ.get("SEERR_API_KEY", "")
 ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
 
 # ── Agentic Resource Discovery (ARD) ──
@@ -106,6 +108,7 @@ SERVICE_CONFIG = {
     "romm": ("RomM", ROMM_URL, "romm_"),
     "gamevault": ("GameVault", GAMEVAULT_URL, "gamevault_"),
     "bookshelf": ("Bookshelf", BOOKSHELF_URL, "bookshelf_"),
+    "seerr": ("Seerr", SEERR_URL, "seerr_"),
 }
 SERVICE_ALIASES = {
     "qbt": "qbittorrent",
@@ -119,7 +122,7 @@ mcp = FastMCP(
     instructions=(
         "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
         "Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), "
-        "RomM (ROM library), and GameVault (PC game library). "
+        "Seerr (Media requests), Bookshelf (Books), RomM (ROM library), and GameVault (PC game library). "
         "Use these tools to search, add, and manage media and game libraries.\n\n"
         "## Hungarian (HuN) / nCore workflow\n"
         "nCore is a Hungarian private tracker with dual-audio (HuN) releases. "
@@ -688,6 +691,13 @@ def _bookshelf(path: str, method: str = "GET", json=None, params=None):
     if not BOOKSHELF_URL:
         return "Bookshelf is not configured. Set BOOKSHELF_URL (and BOOKSHELF_API_KEY)."
     return _arr_request("bookshelf", BOOKSHELF_URL, "/api/v1", BOOKSHELF_API_KEY, path, method, json, params)
+
+
+def _seerr(path: str, method: str = "GET", json=None, params=None):
+    """HTTP helper for Seerr (Overseerr/Jellyseerr media requests; /api/v1, X-Api-Key)."""
+    if not SEERR_URL:
+        return "Seerr is not configured. Set SEERR_URL and SEERR_API_KEY."
+    return _arr_request("seerr", SEERR_URL, "/api/v1", SEERR_API_KEY, path, method, json, params)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -2717,6 +2727,129 @@ def jellyfin_scan_library() -> str:
         return "✅ Library scan triggered."
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("jellyfin", error)
+
+
+# ════════════════════════════════════════════════════════════════
+#  Seerr Tools
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def seerr_search(term: str) -> str:
+    """Search Seerr for movies and TV shows. Returns title, year, media type,
+    TMDB ID, and overview — use the TMDB ID with seerr_request_movie /
+    seerr_request_tv to request it."""
+    data = _seerr("/search", params={"query": term})
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data.get("results", [])[:10]:
+        media_type = r.get("mediaType")
+        if media_type not in ("movie", "tv"):
+            continue
+        title = r.get("title") or r.get("name") or "?"
+        date = r.get("releaseDate") or r.get("firstAirDate") or ""
+        year = date[:4] if date else "?"
+        overview = (r.get("overview") or "No description.")[:150]
+        lines.append(
+            f"• {title} ({year}) [tmdbId: {r.get('id', '?')}, type: {media_type}]\n  {overview}"
+        )
+    return "\n".join(lines) or "No results found."
+
+
+@mcp.tool()
+def seerr_request_movie(tmdb_id: int) -> str:
+    """Request a movie in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
+
+    Args:
+        tmdb_id: The TMDB ID of the movie.
+    """
+    if tmdb_id <= 0:
+        return "Invalid tmdb_id."
+    data = _seerr("/request", method="POST", json={"mediaType": "movie", "mediaId": tmdb_id})
+    if isinstance(data, str):
+        return data
+    status = data.get("status", "?")
+    return f"✅ Requested movie (tmdbId: {tmdb_id}). Request id: {data.get('id', '?')}, status: {status}."
+
+
+@mcp.tool()
+def seerr_request_tv(tmdb_id: int, seasons: str = "all") -> str:
+    """Request a TV show in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
+
+    Args:
+        tmdb_id: The TMDB ID of the show.
+        seasons: "all" for every season, or a comma-separated list of season
+            numbers (e.g. "1,2,3").
+    """
+    if tmdb_id <= 0:
+        return "Invalid tmdb_id."
+    if seasons.strip().lower() == "all":
+        season_payload = "all"
+    else:
+        try:
+            season_payload = [int(s.strip()) for s in seasons.split(",") if s.strip()]
+        except ValueError:
+            return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
+        if not season_payload:
+            return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
+    data = _seerr(
+        "/request",
+        method="POST",
+        json={"mediaType": "tv", "mediaId": tmdb_id, "seasons": season_payload},
+    )
+    if isinstance(data, str):
+        return data
+    status = data.get("status", "?")
+    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}). Request id: {data.get('id', '?')}, status: {status}."
+
+
+@mcp.tool()
+def seerr_list_requests(filter: str = "pending") -> str:
+    """List media requests in Seerr.
+
+    Args:
+        filter: One of "all", "approved", "available", "pending", "processing",
+            "unavailable", "failed" (default: "pending").
+    """
+    data = _seerr("/request", params={"filter": filter, "take": 20})
+    if isinstance(data, str):
+        return data
+    results = data.get("results", [])
+    lines = []
+    for r in results:
+        media = r.get("media", {})
+        lines.append(
+            f"• request id: {r.get('id', '?')} | type: {media.get('mediaType', '?')} "
+            f"| tmdbId: {media.get('tmdbId', '?')} | status: {r.get('status', '?')} "
+            f"| requested by: {r.get('requestedBy', {}).get('displayName', '?')}"
+        )
+    return "\n".join(lines) or f"No {filter} requests."
+
+
+@mcp.tool()
+def seerr_request_status(request_id: int) -> str:
+    """Get the status of a specific Seerr request.
+
+    Args:
+        request_id: Seerr request ID (use seerr_list_requests to find it).
+    """
+    if request_id <= 0:
+        return "Invalid request_id."
+    data = _seerr(f"/request/{request_id}")
+    if isinstance(data, str):
+        return data
+    media = data.get("media", {})
+    return (
+        f"Request id: {data.get('id', '?')}\n"
+        f"Type: {media.get('mediaType', '?')}\n"
+        f"TMDB ID: {media.get('tmdbId', '?')}\n"
+        f"Status: {data.get('status', '?')}\n"
+        f"Media status: {media.get('status', '?')}\n"
+        f"Requested by: {data.get('requestedBy', {}).get('displayName', '?')}\n"
+        f"Created: {data.get('createdAt', '?')}"
+    )
+
 
 
 # ════════════════════════════════════════════════════════════════

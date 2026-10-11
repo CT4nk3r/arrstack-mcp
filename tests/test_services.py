@@ -69,6 +69,8 @@ class OptionalServiceTests(unittest.TestCase):
             "SAB_URL": server.SAB_URL,
             "SAB_API_KEY": server.SAB_API_KEY,
             "BOOKSHELF_URL": server.BOOKSHELF_URL,
+            "SEERR_URL": server.SEERR_URL,
+            "SEERR_API_KEY": server.SEERR_API_KEY,
         }
 
     def tearDown(self):
@@ -106,6 +108,57 @@ class OptionalServiceTests(unittest.TestCase):
 
         _, kwargs = request.call_args
         self.assertEqual(kwargs["params"], {"term": "book&apikey=leak"})
+
+    @patch("server.httpx.request")
+    def test_seerr_search_uses_structured_params(self, request):
+        server.SEERR_URL = "http://seerr:5055"
+        request.return_value = response({"results": []})
+
+        server.seerr_search("inception&apikey=leak")
+
+        _, kwargs = request.call_args
+        self.assertEqual(kwargs["params"], {"query": "inception&apikey=leak"})
+
+    @patch("server.httpx.request")
+    def test_seerr_request_movie_posts_correct_body(self, request):
+        server.SEERR_URL = "http://seerr:5055"
+        request.return_value = response({"id": 1, "status": 2})
+
+        server.seerr_request_movie(27205)
+
+        _, kwargs = request.call_args
+        self.assertEqual(kwargs["json"], {"mediaType": "movie", "mediaId": 27205})
+
+    @patch("server.httpx.request")
+    def test_seerr_request_tv_accepts_all(self, request):
+        server.SEERR_URL = "http://seerr:5055"
+        request.return_value = response({"id": 1, "status": 2})
+
+        server.seerr_request_tv(1399, seasons="all")
+
+        _, kwargs = request.call_args
+        self.assertEqual(
+            kwargs["json"], {"mediaType": "tv", "mediaId": 1399, "seasons": "all"}
+        )
+
+    @patch("server.httpx.request")
+    def test_seerr_request_tv_parses_season_list(self, request):
+        server.SEERR_URL = "http://seerr:5055"
+        request.return_value = response({"id": 1, "status": 2})
+
+        server.seerr_request_tv(1399, seasons="1, 2,3")
+
+        _, kwargs = request.call_args
+        self.assertEqual(
+            kwargs["json"], {"mediaType": "tv", "mediaId": 1399, "seasons": [1, 2, 3]}
+        )
+
+    def test_seerr_request_tv_rejects_invalid_seasons(self):
+        server.SEERR_URL = "http://seerr:5055"
+
+        result = server.seerr_request_tv(1399, seasons="one,two")
+
+        self.assertIn("Invalid seasons", result)
 
 
 if __name__ == "__main__":

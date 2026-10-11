@@ -55,6 +55,9 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(server.sonarr_get_series(0), "Invalid series_id.")
         self.assertEqual(server.radarr_get_movie(-1), "Invalid movie_id.")
         self.assertEqual(server.prowlarr_test_indexer(0), "Invalid indexer_id.")
+        self.assertEqual(server.seerr_request_movie(0), "Invalid tmdb_id.")
+        self.assertEqual(server.seerr_request_tv(-1), "Invalid tmdb_id.")
+        self.assertEqual(server.seerr_request_status(0), "Invalid request_id.")
         self.assertEqual(
             server.radarr_set_quality_profile_qualities(0, allow="x"), "Invalid profile_id."
         )
