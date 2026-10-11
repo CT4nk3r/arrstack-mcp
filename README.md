@@ -139,50 +139,80 @@ services:
 
 ## Configuration
 
-All configuration is done via environment variables:
+Every setting is an environment variable (table below). Two optional
+conveniences sit on top:
 
+- **Secret files:** any variable can be read from a file by setting
+  `<NAME>_FILE`, e.g. `SONARR_API_KEY_FILE=/run/secrets/sonarr_api_key`
+  (Docker/Podman secrets).
+- **Config file:** put settings in a TOML file and point the server at it with
+  `--config /path/arrstack.toml` or `ARRSTACK_CONFIG=/path/arrstack.toml`. One
+  section per service, keys in lowercase; `<key>_file` reads a value from a file:
+
+  ```toml
+  [server]
+  enabled_services = "sonarr,radarr,qbittorrent"
+
+  [sonarr]
+  url = "http://sonarr:8989"
+  api_key = "your-api-key"
+
+  [qbittorrent]
+  url = "http://qbittorrent:8080"
+  username = "admin"
+  password_file = "/run/secrets/qbt_password"
+  ```
+
+Precedence, highest first: a non-empty environment variable, `<NAME>_FILE`, the
+config file, the default. Empty variables count as unset, so a compose file
+listing `SONARR_URL=` doesn't hide the config file's value. Invalid values
+(unknown sections or keys, URLs without `http://`, unreadable secret files)
+stop the server at startup with a list of every problem.
+
+<!-- BEGIN CONFIG TABLE (generated from config.py; run tests to check) -->
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ENABLED_SERVICES` | No | `auto` (default), `all`, or a comma-separated service subset |
 | `ALLOW_DESTRUCTIVE` | No | `false` hides tools that delete downloads or library files (default `true`) |
 | `INSTRUCTION_PRESETS` | No | Comma-separated opt-in instruction presets (e.g. `hun-ncore`) |
 | `EXTRA_INSTRUCTIONS` | No | Free text appended to the server instructions |
+| `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
+| `LOG_LEVEL` | No | Logging level (default: `INFO`; credentials are masked) |
 | `SONARR_URL` | No | Sonarr base URL (e.g. `http://localhost:8989`) |
 | `SONARR_API_KEY` | If Sonarr | Sonarr API key (Settings → General) |
 | `RADARR_URL` | No | Radarr base URL (e.g. `http://localhost:7878`) |
 | `RADARR_API_KEY` | If Radarr | Radarr API key (Settings → General) |
 | `LIDARR_URL` | No | Lidarr base URL (e.g. `http://localhost:8686`) |
 | `LIDARR_API_KEY` | If Lidarr | Lidarr API key (Settings → General) |
+| `PROWLARR_URL` | No | Prowlarr base URL (e.g. `http://localhost:9696`) |
+| `PROWLARR_API_KEY` | If Prowlarr | Prowlarr API key (Settings → General) |
 | `QBT_URL` | No | qBittorrent Web UI URL (e.g. `http://localhost:8080`) |
 | `QBT_USER` | If qBt | qBittorrent username (default: `admin`) |
 | `QBT_PASS` | If qBt | qBittorrent password |
 | `RDT_URL` | No | RDTClient base URL (e.g. `http://localhost:6500`) |
 | `RDT_USER` | If RDT login | RDTClient username (default: `admin`) |
 | `RDT_PASS` | If RDT login | RDTClient password |
+| `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
+| `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `JELLYFIN_URL` | No | Jellyfin base URL (e.g. `http://localhost:8096`) |
-| `JELLYFIN_API_KEY` | No | Jellyfin API key (optional, for authenticated endpoints) |
-| `PROWLARR_URL` | No | Prowlarr base URL (e.g. `http://localhost:9696`) |
-| `PROWLARR_API_KEY` | If Prowlarr | Prowlarr API key (Settings → General) |
+| `JELLYFIN_API_KEY` | No | Jellyfin API key (needed for libraries, recent items and library scans) |
 | `ROMM_URL` | No | RomM base URL (e.g. `http://localhost:8081`) |
 | `ROMM_API_TOKEN` | If RomM | RomM bearer token; alternatively use `ROMM_USER` and `ROMM_PASS` |
 | `ROMM_USER` | If RomM basic auth | RomM username |
 | `ROMM_PASS` | If RomM basic auth | RomM password |
 | `GAMEVAULT_URL` | No | GameVault server URL (e.g. `http://localhost:8082`) |
-| `GAMEVAULT_API_KEY` | If GameVault | GameVault API key |
-| `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
-| `LOG_LEVEL` | No | Request logging level (default: `INFO`; credentials are never logged) |
+| `GAMEVAULT_API_KEY` | If GameVault | GameVault API key (Admin panel → API Keys) |
+| `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
+| `BOOKSHELF_API_KEY` | If Bookshelf | Bookshelf API key (Settings → General) |
+| `SEERR_URL` | No | Seerr / Overseerr / Jellyseerr base URL (e.g. `http://localhost:5055`) |
+| `SEERR_API_KEY` | If Seerr | Seerr API key (Settings → General) |
 | `ARD_ENABLED` | No | Agentic Resource Discovery publishing: `auto` (default; on for HTTP transports), `true`, or `false` |
 | `ARD_PUBLIC_URL` | No | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); advertises an absolute connection endpoint inside the card. Leave blank if the server is private. |
 | `ARD_DOMAIN` | No | Publisher domain for the `urn:air` logical identifier (defaults to the host of `ARD_PUBLIC_URL`, else `localhost`) |
 | `ARD_HOST_NAME` | No | Human-readable catalog host name (default: `arrstack-mcp`) |
 | `ARD_EMBED_CARD` | No | `auto` (embed the server card inline only when `ARD_PUBLIC_URL` is unset), `true` (always embed — best for static hosting), or `false` (always reference it by URL) |
 | `ARD_DID_WEB` | No | Opt-in `did:web` host identity (e.g. `arrstack.example.com`). Only set for a domain whose root you control and where you host a `/.well-known/did.json`; otherwise left off |
-| `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
-| `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
-| `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
-| `BOOKSHELF_API_KEY` | If Bookshelf | Bookshelf API key (Settings → General) |
-| `SEERR_URL` | No | Seerr / Overseerr / Jellyseerr base URL (e.g. `http://localhost:5055`) |
-| `SEERR_API_KEY` | If Seerr | Seerr API key (Settings → General) |
+<!-- END CONFIG TABLE -->
 
 ## Available Tools
 

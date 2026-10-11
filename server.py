@@ -23,9 +23,24 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse, Response
 
 import ard
+import config
 
+# ── Configuration ──
+# Every setting is declared in config.py; values come from the environment,
+# <VAR>_FILE secret files, or an optional TOML file (--config / ARRSTACK_CONFIG).
+# Loading never raises: problems are reported by main() and --check.
+_CONFIG = config.load(
+    os.environ, config.config_path(os.environ, sys.argv[1:] if __name__ == "__main__" else ())
+)
+SETTINGS = _CONFIG.values
+CONFIG_PROBLEMS = _CONFIG.problems
+
+_LOG_LEVEL = SETTINGS["LOG_LEVEL"].strip().upper()
+if _LOG_LEVEL not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+    CONFIG_PROBLEMS.append(f"LOG_LEVEL: unknown level '{SETTINGS['LOG_LEVEL']}'")
+    _LOG_LEVEL = "INFO"
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=_LOG_LEVEL,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("arrstack-mcp")
@@ -36,11 +51,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # Settings whose values must never appear in logs or tool output.
-_SECRET_SETTINGS = (
-    "SONARR_API_KEY", "RADARR_API_KEY", "LIDARR_API_KEY", "PROWLARR_API_KEY",
-    "QBT_PASS", "RDT_PASS", "SAB_API_KEY", "JELLYFIN_API_KEY", "ROMM_API_TOKEN",
-    "ROMM_PASS", "GAMEVAULT_API_KEY", "BOOKSHELF_API_KEY", "SEERR_API_KEY",
-)
+_SECRET_SETTINGS = config.SECRET_ENVS
 _SECRET_PARAM = re.compile(
     r"(?i)\b(api[_-]?key|access[_-]?token|token|password|passwd|pass|sid)=([^&\s\"']+)"
 )
@@ -81,47 +92,41 @@ def _redacting_record_factory(*args, **kwargs):
 
 logging.setLogRecordFactory(_redacting_record_factory)
 
-# ── Configuration ──
-
-SONARR_URL = os.environ.get("SONARR_URL", "").rstrip("/")
-SONARR_API_KEY = os.environ.get("SONARR_API_KEY", "")
-RADARR_URL = os.environ.get("RADARR_URL", "").rstrip("/")
-RADARR_API_KEY = os.environ.get("RADARR_API_KEY", "")
-LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
-LIDARR_API_KEY = os.environ.get("LIDARR_API_KEY", "")
-QBT_URL = os.environ.get("QBT_URL", "").rstrip("/")
-QBT_USER = os.environ.get("QBT_USER", "admin")
-QBT_PASS = os.environ.get("QBT_PASS", "")
-RDT_URL = os.environ.get("RDT_URL", "").rstrip("/")
-RDT_USER = os.environ.get("RDT_USER", "admin")
-RDT_PASS = os.environ.get("RDT_PASS", "")
-PROWLARR_URL = os.environ.get("PROWLARR_URL", "").rstrip("/")
-PROWLARR_API_KEY = os.environ.get("PROWLARR_API_KEY", "")
-JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
-JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
-ROMM_URL = os.environ.get("ROMM_URL", "").rstrip("/")
-ROMM_API_TOKEN = os.environ.get("ROMM_API_TOKEN", "")
-ROMM_USER = os.environ.get("ROMM_USER", "")
-ROMM_PASS = os.environ.get("ROMM_PASS", "")
-GAMEVAULT_URL = os.environ.get("GAMEVAULT_URL", "").rstrip("/")
-GAMEVAULT_API_KEY = os.environ.get("GAMEVAULT_API_KEY", "")
+SONARR_URL = SETTINGS["SONARR_URL"].rstrip("/")
+SONARR_API_KEY = SETTINGS["SONARR_API_KEY"]
+RADARR_URL = SETTINGS["RADARR_URL"].rstrip("/")
+RADARR_API_KEY = SETTINGS["RADARR_API_KEY"]
+LIDARR_URL = SETTINGS["LIDARR_URL"].rstrip("/")
+LIDARR_API_KEY = SETTINGS["LIDARR_API_KEY"]
+QBT_URL = SETTINGS["QBT_URL"].rstrip("/")
+QBT_USER = SETTINGS["QBT_USER"]
+QBT_PASS = SETTINGS["QBT_PASS"]
+RDT_URL = SETTINGS["RDT_URL"].rstrip("/")
+RDT_USER = SETTINGS["RDT_USER"]
+RDT_PASS = SETTINGS["RDT_PASS"]
+PROWLARR_URL = SETTINGS["PROWLARR_URL"].rstrip("/")
+PROWLARR_API_KEY = SETTINGS["PROWLARR_API_KEY"]
+JELLYFIN_URL = SETTINGS["JELLYFIN_URL"].rstrip("/")
+JELLYFIN_API_KEY = SETTINGS["JELLYFIN_API_KEY"]
+ROMM_URL = SETTINGS["ROMM_URL"].rstrip("/")
+ROMM_API_TOKEN = SETTINGS["ROMM_API_TOKEN"]
+ROMM_USER = SETTINGS["ROMM_USER"]
+ROMM_PASS = SETTINGS["ROMM_PASS"]
+GAMEVAULT_URL = SETTINGS["GAMEVAULT_URL"].rstrip("/")
+GAMEVAULT_API_KEY = SETTINGS["GAMEVAULT_API_KEY"]
 MCP_ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get(
-        "MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*,[::1]:*"
-    ).split(",")
-    if host.strip()
+    host.strip() for host in SETTINGS["MCP_ALLOWED_HOSTS"].split(",") if host.strip()
 ]
-SAB_URL = os.environ.get("SAB_URL", "").rstrip("/")
-SAB_API_KEY = os.environ.get("SAB_API_KEY", "")
-BOOKSHELF_URL = os.environ.get("BOOKSHELF_URL", "").rstrip("/")
-BOOKSHELF_API_KEY = os.environ.get("BOOKSHELF_API_KEY", "")
-SEERR_URL = os.environ.get("SEERR_URL", "").rstrip("/")
-SEERR_API_KEY = os.environ.get("SEERR_API_KEY", "")
-ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
-INSTRUCTION_PRESETS = os.environ.get("INSTRUCTION_PRESETS", "")
-EXTRA_INSTRUCTIONS = os.environ.get("EXTRA_INSTRUCTIONS", "")
-ALLOW_DESTRUCTIVE = os.environ.get("ALLOW_DESTRUCTIVE", "true")
+SAB_URL = SETTINGS["SAB_URL"].rstrip("/")
+SAB_API_KEY = SETTINGS["SAB_API_KEY"]
+BOOKSHELF_URL = SETTINGS["BOOKSHELF_URL"].rstrip("/")
+BOOKSHELF_API_KEY = SETTINGS["BOOKSHELF_API_KEY"]
+SEERR_URL = SETTINGS["SEERR_URL"].rstrip("/")
+SEERR_API_KEY = SETTINGS["SEERR_API_KEY"]
+ENABLED_SERVICES = SETTINGS["ENABLED_SERVICES"]
+INSTRUCTION_PRESETS = SETTINGS["INSTRUCTION_PRESETS"]
+EXTRA_INSTRUCTIONS = SETTINGS["EXTRA_INSTRUCTIONS"]
+ALLOW_DESTRUCTIVE = SETTINGS["ALLOW_DESTRUCTIVE"]
 
 # ── Agentic Resource Discovery (ARD) ──
 # Publish this MCP server to ARD registries/crawlers. See ard.py and README.
@@ -144,33 +149,19 @@ ALLOW_DESTRUCTIVE = os.environ.get("ALLOW_DESTRUCTIVE", "true")
 #                 set this for a domain whose root you control and where you host
 #                 a DID document — it is otherwise left off so we never advertise
 #                 an identity that can't resolve.
-ARD_ENABLED = os.environ.get("ARD_ENABLED", "auto").strip().lower()
-ARD_PUBLIC_URL = os.environ.get("ARD_PUBLIC_URL", "").strip()
-ARD_DOMAIN = os.environ.get("ARD_DOMAIN", "").strip()
-ARD_HOST_NAME = os.environ.get("ARD_HOST_NAME", "").strip() or ard.DEFAULT_HOST_NAME
-ARD_EMBED_CARD = os.environ.get("ARD_EMBED_CARD", "auto").strip().lower()
-ARD_DID_WEB = os.environ.get("ARD_DID_WEB", "").strip()
+ARD_ENABLED = SETTINGS["ARD_ENABLED"].strip().lower()
+ARD_PUBLIC_URL = SETTINGS["ARD_PUBLIC_URL"].strip()
+ARD_DOMAIN = SETTINGS["ARD_DOMAIN"].strip()
+ARD_HOST_NAME = SETTINGS["ARD_HOST_NAME"].strip() or ard.DEFAULT_HOST_NAME
+ARD_EMBED_CARD = SETTINGS["ARD_EMBED_CARD"].strip().lower()
+ARD_DID_WEB = SETTINGS["ARD_DID_WEB"].strip()
 
+# key -> (display name, base URL, tool prefix); order and shape kept for callers.
 SERVICE_CONFIG = {
-    "sonarr": ("Sonarr", SONARR_URL, "sonarr_"),
-    "radarr": ("Radarr", RADARR_URL, "radarr_"),
-    "lidarr": ("Lidarr", LIDARR_URL, "lidarr_"),
-    "prowlarr": ("Prowlarr", PROWLARR_URL, "prowlarr_"),
-    "qbittorrent": ("qBittorrent", QBT_URL, "qbt_"),
-    "rdtclient": ("RDTClient", RDT_URL, "rdt_"),
-    "sabnzbd": ("SABnzbd", SAB_URL, "sab_"),
-    "jellyfin": ("Jellyfin", JELLYFIN_URL, "jellyfin_"),
-    "romm": ("RomM", ROMM_URL, "romm_"),
-    "gamevault": ("GameVault", GAMEVAULT_URL, "gamevault_"),
-    "bookshelf": ("Bookshelf", BOOKSHELF_URL, "bookshelf_"),
-    "seerr": ("Seerr", SEERR_URL, "seerr_"),
+    key: (service.name, SETTINGS[service.url.env], service.prefix)
+    for key, service in config.SERVICES.items()
 }
-SERVICE_ALIASES = {
-    "qbt": "qbittorrent",
-    "sab": "sabnzbd",
-    "rdt": "rdtclient",
-    "game-vault": "gamevault",
-}
+SERVICE_ALIASES = dict(config.SERVICE_ALIASES)
 
 _BASE_INSTRUCTIONS = (
     "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
@@ -3467,6 +3458,12 @@ def bookshelf_search_missing() -> str:
 
 # ── Entrypoint ──
 
+def _format_config_problems() -> str:
+    where = f" (config file: {_CONFIG.path})" if _CONFIG.path else ""
+    lines = [f"configuration problems{where}:"] + [f"  - {problem}" for problem in CONFIG_PROBLEMS]
+    return "\n".join(lines)
+
+
 def main():
     global _active_transport
     parser = argparse.ArgumentParser(
@@ -3477,6 +3474,11 @@ def main():
         choices=["stdio", "streamable-http", "sse"],
         default="stdio",
         help="MCP transport (default: stdio)",
+    )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=f"TOML config file (also ${config.CONFIG_ENV}); environment variables override it",
     )
     parser.add_argument("--port", type=int, default=8000, help="HTTP port (default: 8000)")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP bind host (default: 0.0.0.0)")
@@ -3489,6 +3491,11 @@ def main():
         "--setup",
         action="store_true",
         help="Interactively generate an ENABLED_SERVICES setting, then exit",
+    )
+    parser.add_argument(
+        "--print-env-example",
+        action="store_true",
+        help="Print a .env template covering every setting, then exit",
     )
     parser.add_argument(
         "--print-catalog",
@@ -3505,6 +3512,12 @@ def main():
 
     if args.transport in ("streamable-http", "sse"):
         _active_transport = args.transport
+
+    if args.print_env_example:
+        sys.stdout.write(config.render_env_example())
+        return
+    if CONFIG_PROBLEMS:
+        parser.error(_format_config_problems())
 
     try:
         _instruction_presets(INSTRUCTION_PRESETS)
