@@ -7,6 +7,7 @@ search, add, and manage your media library.
 """
 
 import os
+import re
 import sys
 import json
 import base64
@@ -28,6 +29,57 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("arrstack-mcp")
+# httpx logs every request URL at INFO, and some APIs (SABnzbd, Prowlarr
+# download links) carry the API key in the query string. Our own helpers log
+# method + path only.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+# Settings whose values must never appear in logs or tool output.
+_SECRET_SETTINGS = (
+    "SONARR_API_KEY", "RADARR_API_KEY", "LIDARR_API_KEY", "PROWLARR_API_KEY",
+    "QBT_PASS", "RDT_PASS", "SAB_API_KEY", "JELLYFIN_API_KEY", "ROMM_API_TOKEN",
+    "ROMM_PASS", "GAMEVAULT_API_KEY", "BOOKSHELF_API_KEY", "SEERR_API_KEY",
+)
+_SECRET_PARAM = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|token|password|passwd|pass|sid)=([^&\s\"']+)"
+)
+# Shorter values (e.g. a password like "admin") would mask ordinary words.
+_MIN_LITERAL_SECRET = 6
+
+
+def _redact(text: str) -> str:
+    """Mask credentials in text bound for logs or tool output.
+
+    Masks `apikey=...`-style query/form values, plus any configured secret
+    value wherever it appears (headers echoed in an error body, etc.).
+    """
+    text = _SECRET_PARAM.sub(lambda m: f"{m.group(1)}=***", text)
+    for name in _SECRET_SETTINGS:
+        value = globals().get(name) or ""
+        if len(value) >= _MIN_LITERAL_SECRET and value in text:
+            text = text.replace(value, "***")
+    return text
+
+
+_base_record_factory = logging.getLogRecordFactory()
+
+
+def _redacting_record_factory(*args, **kwargs):
+    # Redact at record creation so every handler (ours, uvicorn's, test
+    # capture) sees the masked message.
+    record = _base_record_factory(*args, **kwargs)
+    try:
+        message = record.getMessage()
+    except Exception:  # malformed format args: leave the record alone
+        return record
+    masked = _redact(message)
+    if masked != message:
+        record.msg, record.args = masked, ()
+    return record
+
+
+logging.setLogRecordFactory(_redacting_record_factory)
 
 # ── Configuration ──
 
@@ -314,10 +366,11 @@ def _http_error(service: str, error: Exception) -> str:
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         body = error.response.text[:200] if error.response is not None else ""
+        body = _redact(body)
         logger.error("%s HTTP %s: %s", service, status, body)
         return f"{service} request failed: HTTP {status} — {body}"
     logger.error("%s request error: %s", service, error)
-    return f"{service} request error: {error}"
+    return f"{service} request error: {_redact(str(error))}"
 
 
 def _decode_json(service: str, r):

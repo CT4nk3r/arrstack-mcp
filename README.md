@@ -571,7 +571,9 @@ tools using the configured service credentials.
   hostnames or IP addresses clients use, with optional wildcard ports:
   `localhost:*,127.0.0.1:*,arrstack-mcp:*,100.64.0.1:*`.
 - The Docker image runs as non-root user `appuser` with UID `1000`.
-- API keys and request headers are never logged.
+- Credentials are kept out of logs and tool output: request URLs are not
+  logged (some APIs put the key in the query string), and `apikey=`-style
+  values plus every configured key/password (6+ characters) are masked as `***`.
 
 ## License
 
