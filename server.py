@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse, Response
 
 import ard
 import config
+import doctor
 
 # ── Configuration ──
 # Every setting is declared in config.py; values come from the environment,
@@ -3464,6 +3465,24 @@ def _format_config_problems() -> str:
     return "\n".join(lines)
 
 
+def _run_check(as_json: bool = False, timeout: float = doctor.DEFAULT_TIMEOUT, transport=None) -> int:
+    """--check: report every service's state; returns the process exit code."""
+    problems = list(CONFIG_PROBLEMS)
+    try:
+        _instruction_presets(INSTRUCTION_PRESETS)
+    except ValueError as error:
+        problems.append(str(error))
+    try:
+        selected = _selected_services()
+    except ValueError as error:
+        problems.append(f"ENABLED_SERVICES: {error}")
+        selected = _selected_services("auto")
+    results = doctor.run_checks(SETTINGS, selected, transport=transport, timeout=timeout)
+    render = doctor.render_json if as_json else doctor.render_text
+    sys.stdout.write(render(results, problems, _CONFIG.path))
+    return doctor.exit_code(results, problems)
+
+
 def main():
     global _active_transport
     parser = argparse.ArgumentParser(
@@ -3493,6 +3512,19 @@ def main():
         help="Interactively generate an ENABLED_SERVICES setting, then exit",
     )
     parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check every service: configured, reachable, credentials accepted, version. "
+        "Exits 1 if something enabled is broken",
+    )
+    parser.add_argument("--json", action="store_true", help="With --check: machine-readable output")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=doctor.DEFAULT_TIMEOUT,
+        help=f"With --check/--setup: per-request timeout in seconds (default: {doctor.DEFAULT_TIMEOUT:g})",
+    )
+    parser.add_argument(
         "--print-env-example",
         action="store_true",
         help="Print a .env template covering every setting, then exit",
@@ -3516,6 +3548,8 @@ def main():
     if args.print_env_example:
         sys.stdout.write(config.render_env_example())
         return
+    if args.check:
+        sys.exit(_run_check(as_json=args.json, timeout=args.timeout))
     if CONFIG_PROBLEMS:
         parser.error(_format_config_problems())
 

@@ -214,6 +214,26 @@ stop the server at startup with a list of every problem.
 | `ARD_DID_WEB` | No | Opt-in `did:web` host identity (e.g. `arrstack.example.com`). Only set for a domain whose root you control and where you host a `/.well-known/did.json`; otherwise left off |
 <!-- END CONFIG TABLE -->
 
+### Check your setup
+
+`python server.py --check` tests every service with the same settings the server
+would use and tells you what to fix:
+
+```text
+  ✅ sonarr       Sonarr 4.0.9.2244 at http://sonarr:8989/sonarr
+  ❌ radarr       credentials rejected (HTTP 401): check RADARR_API_KEY (Settings → General → API Key)
+  ⚠️ jellyfin     Jellyfin 10.11.8 at http://jellyfin:8096; JELLYFIN_API_KEY is empty; ...
+  ⏸️ lidarr       configured but excluded by ENABLED_SERVICES
+  ·  sabnzbd      not configured (set SAB_URL)
+```
+
+It catches wrong URL bases (HTTP 404), login pages in front of the API,
+rejected keys, a URL pointing at the wrong app, and unreachable hosts
+(`localhost` inside a container). It only makes read-only requests (plus the
+qBittorrent/RDTClient login), never prints credentials, and exits with status 1
+when an enabled service is broken. Add `--json` for scripts. In Docker:
+`docker compose exec arrstack-mcp python server.py --check`.
+
 ## Available Tools
 
 ### Sonarr (TV Shows)
