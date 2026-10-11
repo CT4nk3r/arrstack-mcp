@@ -222,15 +222,15 @@ def check_service(service: config.Service, values: Mapping[str, str], selected: 
                   timeout: float = DEFAULT_TIMEOUT) -> CheckResult:
     url = values.get(service.url.env, "")
     result = CheckResult(service.key, service.name, OK, "", url=url)
-    explicitly_selected = service.key in selected
+    is_selected = service.key in selected
     if not url:
         result.status = NOT_CONFIGURED
         result.detail = f"not configured (set {service.url.env})"
-        if explicitly_selected and values.get("ENABLED_SERVICES", "auto").strip().lower() not in ("", "auto", "all"):
+        if is_selected and values.get("ENABLED_SERVICES", "auto").strip().lower() not in ("", "auto", "all"):
             result.status = ERROR
             result.detail = f"listed in ENABLED_SERVICES but {service.url.env} is not set"
         return result
-    if not explicitly_selected:
+    if not is_selected:
         result.status = DISABLED
         result.detail = "configured but excluded by ENABLED_SERVICES"
         return result
