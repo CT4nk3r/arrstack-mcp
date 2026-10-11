@@ -36,8 +36,6 @@ advertised tool catalog is configurable:
 - A comma-separated list such as `sonarr,radarr,romm` advertises exactly that subset.
 - `ENABLED_SERVICES=all` advertises every available tool.
 - Run `python server.py --list-services` to inspect configured/enabled services.
-- Run `python server.py --setup` for an interactive selector that prints the
-  resulting `ENABLED_SERVICES` line.
 
 Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 `qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`,
@@ -56,86 +54,109 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 
 ## Quick Start
 
-### Option 1: Claude Desktop / Cursor / VS Code (stdio)
-
-1. Install dependencies:
-
-   ```bash
-   pip install "mcp[cli]>=1.9.0,<2" httpx
-   ```
-
-2. Add to your MCP client config (e.g. `claude_desktop_config.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "arrstack": {
-         "command": "python",
-         "args": ["/path/to/arrstack-mcp/server.py"],
-         "env": {
-           "SONARR_URL": "http://localhost:8989",
-           "SONARR_API_KEY": "your-api-key",
-           "RADARR_URL": "http://localhost:7878",
-           "RADARR_API_KEY": "your-api-key",
-           "QBT_URL": "http://localhost:8080",
-           "QBT_USER": "admin",
-           "QBT_PASS": "your-password",
-           "JELLYFIN_URL": "http://localhost:8096"
-         }
-       }
-     }
-   }
-   ```
-
-3. Restart your MCP client. Done!
-
-### Option 2: Docker (HTTP transport)
-
-For remote setups or when running alongside your *arr stack:
+### 1. Guided setup (recommended)
 
 ```bash
 git clone https://github.com/ct4nk3r/arrstack-mcp.git
 cd arrstack-mcp
-cp .env.example .env
-# Edit .env with your service URLs and API keys
-docker compose up -d
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python server.py --setup
 ```
 
-The server runs on port `8000` with Streamable HTTP transport.
+The wizard asks for each service's URL and API key (keys are typed without
+echo), **tests every connection as you go**, writes `arrstack.toml` (mode
+600, an existing file is backed up first) and prints the exact snippet for
+Claude Desktop, Cursor, VS Code, Claude Code and Docker.
 
-#### Connect to OpenClaw
+- `--setup --discover` first looks for services at their usual container names
+  (`sonarr`, `radarr`, `qbittorrent`, ...) and on `localhost`, including URL
+  bases such as `/sonarr`, and offers what it finds as defaults. It only probes
+  that fixed list, never your whole network.
+- `--arr-config /path/to/sonarr-config` (repeatable) reads the URL base, port and
+  API key from a Sonarr/Radarr/Lidarr/Prowlarr `config.xml`, so you don't have to
+  copy keys by hand.
+- `--format env --output .env` writes a Docker `env_file` instead of TOML.
+- Afterwards, `python server.py --check --config arrstack.toml` re-tests
+  everything (see [Check your setup](#check-your-setup)).
+
+### 2. Connect your MCP client
+
+With a config file, every client needs just the server path and `--config`:
+
+**Claude Desktop / Cursor** (`claude_desktop_config.json` / `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "arrstack": {
+      "command": "/path/to/arrstack-mcp/.venv/bin/python",
+      "args": ["/path/to/arrstack-mcp/server.py", "--config", "/path/to/arrstack-mcp/arrstack.toml"]
+    }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "arrstack": {
+      "type": "stdio",
+      "command": "/path/to/arrstack-mcp/.venv/bin/python",
+      "args": ["/path/to/arrstack-mcp/server.py", "--config", "/path/to/arrstack-mcp/arrstack.toml"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add arrstack -- /path/to/arrstack-mcp/.venv/bin/python /path/to/arrstack-mcp/server.py --config /path/to/arrstack-mcp/arrstack.toml
+```
+
+You can still pass settings as environment variables instead (an `"env": {...}`
+block with `SONARR_URL`, `SONARR_API_KEY`, ...); see [Configuration](#configuration).
+
+### 3. Or run it in Docker (HTTP transport)
+
+For remote clients, or to sit next to your *arr containers:
+
+```bash
+git clone https://github.com/ct4nk3r/arrstack-mcp.git
+cd arrstack-mcp
+cp .env.example .env        # fill in the services you use
+# or: python server.py --setup --format env --output .env
+docker compose up -d
+docker compose exec arrstack-mcp python server.py --check
+```
+
+The bundled `docker-compose.yml` loads `.env` with `env_file:` (or mount a TOML
+file, see the comments in it). The server listens on port `8000` with
+Streamable HTTP at `/mcp`; start it with `--transport sse` for legacy clients
+that only speak SSE (endpoint `/sse`). Inside Docker, use container names in
+URLs (`http://sonarr:8989`), not `localhost`, and put `arrstack-mcp` on the same
+network as your services:
+
+```yaml
+services:
+  arrstack-mcp:
+    # ...as in docker-compose.yml
+    networks:
+      - your-media-network
+networks:
+  your-media-network:
+    external: true
+```
+
+**OpenClaw:**
 
 ```bash
 openclaw mcp set arrstack '{"url":"http://arrstack-mcp:8000/mcp","transport":"streamable-http"}'
 ```
 
-#### Connect to other HTTP MCP clients
-
-Point your client to `http://<host>:8000/mcp` using Streamable HTTP transport.
-
-### Option 3: Docker on the same network as your *arr stack
-
-If your media services run in Docker, add `arrstack-mcp` to the same network:
-
-```yaml
-services:
-  arrstack-mcp:
-    build: .
-    container_name: arrstack-mcp
-    ports:
-      - "127.0.0.1:8000:8000"   # localhost only — see Security below
-    environment:
-      - SONARR_URL=http://sonarr:8989
-      - SONARR_API_KEY=your-key
-      - RADARR_URL=http://radarr:7878
-      - RADARR_API_KEY=your-key
-      - QBT_URL=http://qbittorrent:8080
-      - QBT_USER=admin
-      - QBT_PASS=your-password
-      - JELLYFIN_URL=http://jellyfin:8096
-    networks:
-      - your-media-network
-```
+**Other HTTP MCP clients:** point them at `http://<host>:8000/mcp` (Streamable HTTP).
 
 ## Configuration
 
