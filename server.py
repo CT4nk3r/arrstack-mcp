@@ -540,6 +540,44 @@ def _format_size(size_bytes) -> str:
         size /= 1024
 
 
+def _apply_quality_allowlist(items, allow_lower: set, disallow_lower: set):
+    """Toggle 'allowed' on quality profile items matching the given
+    (lowercased) names. Radarr/Sonarr quality profiles nest grouped
+    qualities (e.g. "WEB 1080p" containing WEBDL-1080p + WEBRip-1080p) —
+    the group's own 'allowed' flag is what governs selection, so a match
+    on a member's name toggles the enclosing group instead of the leaf.
+    Mutates `items` in place. Returns (changed_descriptions, names_not_found).
+    """
+    changed = []
+    seen_lower = set()
+    for item in items:
+        quality = item.get("quality")
+        name = quality.get("name") if quality else item.get("name")
+        if not name:
+            continue
+        name_lower = name.lower()
+        nested = item.get("items") or []
+        member_names_lower = {
+            (m.get("quality") or {}).get("name", "").lower() for m in nested
+        }
+        matches_allow = name_lower in allow_lower or bool(member_names_lower & allow_lower)
+        matches_disallow = name_lower in disallow_lower or bool(member_names_lower & disallow_lower)
+        if matches_allow:
+            seen_lower.add(name_lower)
+            seen_lower |= member_names_lower & allow_lower
+            if not item.get("allowed"):
+                item["allowed"] = True
+                changed.append(f"+{name}")
+        if matches_disallow:
+            seen_lower.add(name_lower)
+            seen_lower |= member_names_lower & disallow_lower
+            if item.get("allowed"):
+                item["allowed"] = False
+                changed.append(f"-{name}")
+    not_found = sorted((allow_lower | disallow_lower) - seen_lower)
+    return changed, not_found
+
+
 def _selected_services(value: str | None = None) -> set[str]:
     """Resolve ENABLED_SERVICES into canonical service keys."""
     raw = (value if value is not None else ENABLED_SERVICES).strip().lower()
@@ -782,6 +820,44 @@ def sonarr_list_quality_profiles() -> str:
             f"  Allowed: {', '.join(qualities) or 'none'}"
         )
     return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def sonarr_set_quality_profile_qualities(profile_id: int, allow: str = "", disallow: str = "") -> str:
+    """Enable or disable specific qualities (or quality groups, e.g. "WEB 1080p")
+    within a Sonarr quality profile. Use sonarr_list_quality_profiles first to
+    see profile IDs and current quality/group names.
+
+    Args:
+        profile_id: Sonarr quality profile ID.
+        allow: Comma-separated quality/group names to enable (e.g. "Bluray-1080p,WEB 1080p").
+        disallow: Comma-separated quality/group names to disable.
+    """
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    allow_lower = {n.strip().lower() for n in allow.split(",") if n.strip()}
+    disallow_lower = {n.strip().lower() for n in disallow.split(",") if n.strip()}
+    if not allow_lower and not disallow_lower:
+        return "Provide at least one quality name in allow or disallow."
+    overlap = allow_lower & disallow_lower
+    if overlap:
+        return f"Quality names can't be in both allow and disallow: {', '.join(sorted(overlap))}"
+
+    profile = _sonarr(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+
+    changed, not_found = _apply_quality_allowlist(profile.get("items", []), allow_lower, disallow_lower)
+    if changed:
+        result = _sonarr(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
+        if isinstance(result, str):
+            return result
+        msg = f"✅ Updated '{profile.get('name', profile_id)}': {', '.join(changed)}"
+    else:
+        msg = "No changes made."
+    if not_found:
+        msg += f"\n⚠️ Not found in this profile: {', '.join(not_found)}"
+    return msg
 
 
 @mcp.tool()
@@ -1117,6 +1193,44 @@ def radarr_list_quality_profiles() -> str:
             f"  Allowed: {', '.join(qualities) or 'none'}"
         )
     return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def radarr_set_quality_profile_qualities(profile_id: int, allow: str = "", disallow: str = "") -> str:
+    """Enable or disable specific qualities (or quality groups, e.g. "WEB 1080p")
+    within a Radarr quality profile. Use radarr_list_quality_profiles first to
+    see profile IDs and current quality/group names.
+
+    Args:
+        profile_id: Radarr quality profile ID.
+        allow: Comma-separated quality/group names to enable (e.g. "Bluray-1080p,WEB 1080p").
+        disallow: Comma-separated quality/group names to disable.
+    """
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    allow_lower = {n.strip().lower() for n in allow.split(",") if n.strip()}
+    disallow_lower = {n.strip().lower() for n in disallow.split(",") if n.strip()}
+    if not allow_lower and not disallow_lower:
+        return "Provide at least one quality name in allow or disallow."
+    overlap = allow_lower & disallow_lower
+    if overlap:
+        return f"Quality names can't be in both allow and disallow: {', '.join(sorted(overlap))}"
+
+    profile = _radarr(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+
+    changed, not_found = _apply_quality_allowlist(profile.get("items", []), allow_lower, disallow_lower)
+    if changed:
+        result = _radarr(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
+        if isinstance(result, str):
+            return result
+        msg = f"✅ Updated '{profile.get('name', profile_id)}': {', '.join(changed)}"
+    else:
+        msg = "No changes made."
+    if not_found:
+        msg += f"\n⚠️ Not found in this profile: {', '.join(not_found)}"
+    return msg
 
 
 @mcp.tool()

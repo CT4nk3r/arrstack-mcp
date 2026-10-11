@@ -188,6 +188,7 @@ All configuration is done via environment variables:
 | `sonarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
 | `sonarr_set_quality_definition` | Change size limits for a quality tier |
 | `sonarr_list_custom_formats` | List custom formats |
+| `sonarr_set_quality_profile_qualities` | Enable/disable qualities or quality groups in a profile |
 
 ### Radarr (Movies)
 
@@ -206,6 +207,7 @@ All configuration is done via environment variables:
 | `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
 | `radarr_set_quality_definition` | Change size limits for a quality tier |
 | `radarr_list_custom_formats` | List custom formats |
+| `radarr_set_quality_profile_qualities` | Enable/disable qualities or quality groups in a profile |
 
 ### Lidarr (Music)
 
