@@ -43,6 +43,17 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 `qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`,
 `bookshelf`, and `seerr`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
 
+### Agent behaviour
+
+- `ALLOW_DESTRUCTIVE=false` hides every tool that deletes downloads or library
+  files (`*_delete_queue_item`, `radarr_delete_movie_file`,
+  `sonarr_delete_episode_file`, `qbt_delete`, `rdt_delete`, `sab_delete_job`).
+  Default `true`.
+- `INSTRUCTION_PRESETS` appends opt-in workflow guidance to the server
+  instructions. Available: `hun-ncore` (Hungarian dual-audio releases from nCore:
+  quality-size limits, checking the queue for HuN releases).
+- `EXTRA_INSTRUCTIONS` appends your own free text to the server instructions.
+
 ## Quick Start
 
 ### Option 1: Claude Desktop / Cursor / VS Code (stdio)
@@ -133,6 +144,9 @@ All configuration is done via environment variables:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ENABLED_SERVICES` | No | `auto` (default), `all`, or a comma-separated service subset |
+| `ALLOW_DESTRUCTIVE` | No | `false` hides tools that delete downloads or library files (default `true`) |
+| `INSTRUCTION_PRESETS` | No | Comma-separated opt-in instruction presets (e.g. `hun-ncore`) |
+| `EXTRA_INSTRUCTIONS` | No | Free text appended to the server instructions |
 | `SONARR_URL` | No | Sonarr base URL (e.g. `http://localhost:8989`) |
 | `SONARR_API_KEY` | If Sonarr | Sonarr API key (Settings → General) |
 | `RADARR_URL` | No | Radarr base URL (e.g. `http://localhost:7878`) |

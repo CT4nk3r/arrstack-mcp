@@ -67,6 +67,9 @@ BOOKSHELF_API_KEY = os.environ.get("BOOKSHELF_API_KEY", "")
 SEERR_URL = os.environ.get("SEERR_URL", "").rstrip("/")
 SEERR_API_KEY = os.environ.get("SEERR_API_KEY", "")
 ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
+INSTRUCTION_PRESETS = os.environ.get("INSTRUCTION_PRESETS", "")
+EXTRA_INSTRUCTIONS = os.environ.get("EXTRA_INSTRUCTIONS", "")
+ALLOW_DESTRUCTIVE = os.environ.get("ALLOW_DESTRUCTIVE", "true")
 
 # ── Agentic Resource Discovery (ARD) ──
 # Publish this MCP server to ARD registries/crawlers. See ard.py and README.
@@ -117,13 +120,18 @@ SERVICE_ALIASES = {
     "game-vault": "gamevault",
 }
 
-mcp = FastMCP(
-    "arrstack",
-    instructions=(
-        "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
-        "Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), "
-        "Seerr (Media requests), Bookshelf (Books), RomM (ROM library), and GameVault (PC game library). "
-        "Use these tools to search, add, and manage media and game libraries.\n\n"
+_BASE_INSTRUCTIONS = (
+    "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
+    "Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), "
+    "Seerr (Media requests), Bookshelf (Books), RomM (ROM library), and GameVault (PC game library). "
+    "Use these tools to search, add, and manage media and game libraries."
+)
+
+# Opt-in workflow guidance appended to the server instructions with
+# INSTRUCTION_PRESETS=<name>[,<name>]. Kept out of the default so every client
+# isn't told about one deployment's trackers.
+INSTRUCTION_PRESET_TEXT = {
+    "hun-ncore": (
         "## Hungarian (HuN) / nCore workflow\n"
         "nCore is a Hungarian private tracker with dual-audio (HuN) releases. "
         "When the user wants Hungarian releases:\n"
@@ -140,6 +148,56 @@ mcp = FastMCP(
         "4. If existing files need replacing (e.g. English → HuN), delete the movie file "
         "with radarr_delete_movie_file / sonarr_delete_episode_file first, then search.\n"
     ),
+}
+
+# Tools that delete downloads or library files. ALLOW_DESTRUCTIVE=false hides
+# them from the catalog for deployments that want an additive-only agent.
+DESTRUCTIVE_TOOLS = frozenset({
+    "sonarr_delete_queue_item",
+    "sonarr_delete_episode_file",
+    "radarr_delete_queue_item",
+    "radarr_delete_movie_file",
+    "lidarr_delete_queue_item",
+    "qbt_delete",
+    "rdt_delete",
+    "sab_delete_job",
+})
+
+
+def _parse_bool(name: str, value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be true or false, got {value!r}")
+
+
+def _instruction_presets(value: str) -> list[str]:
+    """Resolve INSTRUCTION_PRESETS into known preset names."""
+    names = [item.strip().lower() for item in value.split(",") if item.strip()]
+    unknown = [name for name in names if name not in INSTRUCTION_PRESET_TEXT]
+    if unknown:
+        valid = ", ".join(INSTRUCTION_PRESET_TEXT)
+        raise ValueError(f"Unknown instruction preset '{unknown[0]}'. Valid presets: {valid}")
+    return names
+
+
+def _build_instructions(presets: str = "", extra: str = "") -> str:
+    """Server instructions: the base text, any opt-in presets, then free text."""
+    parts = [_BASE_INSTRUCTIONS]
+    try:
+        parts += [INSTRUCTION_PRESET_TEXT[name] for name in _instruction_presets(presets)]
+    except ValueError:
+        pass  # reported by main() before the server starts
+    if extra.strip():
+        parts.append(extra.strip())
+    return "\n\n".join(part.strip() for part in parts) + "\n"
+
+
+mcp = FastMCP(
+    "arrstack",
+    instructions=_build_instructions(INSTRUCTION_PRESETS, EXTRA_INSTRUCTIONS),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=MCP_ALLOWED_HOSTS,
@@ -630,15 +688,18 @@ def _selected_services(value: str | None = None) -> set[str]:
 
 
 def _configure_service_tools(value: str | None = None) -> set[str]:
-    """Remove tools belonging to services that are not selected."""
+    """Remove tools of unselected services, and destructive tools if disallowed."""
     selected = _selected_services(value)
     disabled_prefixes = [
         prefix
         for key, (_, _, prefix) in SERVICE_CONFIG.items()
         if key not in selected
     ]
+    allow_destructive = _parse_bool("ALLOW_DESTRUCTIVE", ALLOW_DESTRUCTIVE)
     for tool in list(mcp._tool_manager.list_tools()):
-        if tool.name.startswith(tuple(disabled_prefixes)):
+        if tool.name.startswith(tuple(disabled_prefixes)) or (
+            not allow_destructive and tool.name in DESTRUCTIVE_TOOLS
+        ):
             mcp.remove_tool(tool.name)
     return selected
 
@@ -3393,6 +3454,7 @@ def main():
         _active_transport = args.transport
 
     try:
+        _instruction_presets(INSTRUCTION_PRESETS)
         if args.list_services:
             _print_service_status()
             return
