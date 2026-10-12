@@ -12,16 +12,16 @@ services:
       # this mapping. To reach it from another machine, put it behind Tailscale
       # or an authenticated reverse proxy rather than changing this to 0.0.0.0.
       - "127.0.0.1:8000:8000"
-    # Settings come from .env: `cp .env.example .env` and fill in the services
-    # you use, or generate it with `python server.py --setup --format env --output .env`.
+    # Easiest: start it and open the setup link from `docker compose logs`.
+    # The page saves your choices to ./config/arrstack.toml (create the folder
+    # first: `mkdir config`, so it is owned by you, not root).
+    volumes:
+      - ./config:/config
+    # Optional: settings as environment variables instead (they override the
+    # setup page). `cp .env.example .env` and fill in what you use.
     env_file:
-      - .env
-    # Alternatively, use a TOML config file from `python server.py --setup`
-    # (remove env_file above or keep it for overrides):
-    # environment:
-    #   - ARRSTACK_CONFIG=/config/arrstack.toml
-    # volumes:
-    #   - ./arrstack.toml:/config/arrstack.toml:ro
+      - path: .env
+        required: false
     restart: unless-stopped
     # Put this on the same Docker network as your *arr stack:
     # networks:

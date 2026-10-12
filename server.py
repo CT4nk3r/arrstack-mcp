@@ -27,14 +27,20 @@ import ard
 import config
 import discover
 import doctor
+import setup_ui
 import wizard
 
 # ── Configuration ──
 # Every setting is declared in config.py; values come from the environment,
 # <VAR>_FILE secret files, or an optional TOML file (--config / ARRSTACK_CONFIG).
 # Loading never raises: problems are reported by main() and --check.
+_ARGV = sys.argv[1:] if __name__ == "__main__" else ()
 _CONFIG = config.load(
-    os.environ, config.config_path(os.environ, sys.argv[1:] if __name__ == "__main__" else ())
+    os.environ,
+    config.config_path(os.environ, _ARGV),
+    # A config file named only by $ARRSTACK_CONFIG may not exist yet: the setup
+    # page creates it. An explicit --config path must exist (catches typos).
+    missing_ok="--config" not in _ARGV and not any(a.startswith("--config=") for a in _ARGV),
 )
 SETTINGS = _CONFIG.values
 CONFIG_PROBLEMS = _CONFIG.problems
@@ -3480,6 +3486,37 @@ def bookshelf_search_missing() -> str:
 
 # ── Entrypoint ──
 
+def _setup_output_path() -> pathlib.Path:
+    """Where the setup page writes: the active config file, else ./arrstack.toml."""
+    return pathlib.Path(_CONFIG.path or "arrstack.toml").expanduser().resolve()
+
+
+def _restart_with_config(path: pathlib.Path) -> None:
+    """Re-exec this process so the saved config (and tool list) takes effect."""
+    os.environ[config.CONFIG_ENV] = str(path)
+    logger.warning("setup saved to %s; restarting", path)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]])
+
+
+def _enable_setup_ui(transport: str, host: str, port: int, first_run: bool) -> None:
+    """Register /setup and print its one-time link to the log."""
+    ui = setup_ui.SetupUI(
+        _CONFIG, _setup_output_path(), _restart_with_config,
+        mcp_path="/sse" if transport == "sse" else "/mcp",
+    )
+    for path, methods, handler in ui.routes():
+        mcp.custom_route(path, methods=methods)(handler)
+    shown_host = "<this-server>" if host in ("0.0.0.0", "::", "") else host
+    link = f"http://{shown_host}:{port}/setup?token={ui.token}"
+    if first_run:
+        print("\n   ⚙️  No services configured yet. Open the setup page to pick yours:", file=sys.stderr)
+    else:
+        print("   Setup page (changes on every restart):", file=sys.stderr)
+    print(f"   {link}\n", file=sys.stderr)
+
+
 def _format_config_problems() -> str:
     where = f" (config file: {_CONFIG.path})" if _CONFIG.path else ""
     lines = [f"configuration problems{where}:"] + [f"  - {problem}" for problem in CONFIG_PROBLEMS]
@@ -3616,17 +3653,21 @@ def main():
     except ValueError as error:
         parser.error(str(error))
 
-    if not selected:
+    http = args.transport in ("streamable-http", "sse")
+    setup_enabled = http and SETTINGS["SETUP_UI"].strip().lower() not in ("false", "0", "no", "off")
+    if not selected and not setup_enabled:
         print(
-            "⚠️  No services enabled. Configure at least one service URL or set "
-            "ENABLED_SERVICES to a comma-separated service list.",
+            "⚠️  No services enabled. Run `python server.py --setup`, configure at least one "
+            "service URL, or set ENABLED_SERVICES to a comma-separated service list.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     enabled_names = [SERVICE_CONFIG[key][0] for key in SERVICE_CONFIG if key in selected]
     tool_count = len(mcp._tool_manager.list_tools())
-    print(f"🎬 arrstack-mcp starting ({', '.join(enabled_names)})", file=sys.stderr)
+    print(f"🎬 arrstack-mcp starting ({', '.join(enabled_names) or 'setup mode'})", file=sys.stderr)
+    if setup_enabled:
+        _enable_setup_ui(args.transport, args.host, args.port, first_run=not selected)
     print(f"   Advertised tools: {tool_count}", file=sys.stderr)
     print(f"   Transport: {args.transport}", file=sys.stderr)
     if args.transport in ("streamable-http", "sse") and not _ard_disabled():

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arrstack-mcp setup</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #677085; --line: #e2e5eb;
+    --accent: #4f6bed; --ok: #1f9d55; --warn: #c27c0e; --err: #d64545; --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11141a; --card: #1a1f28; --text: #e7eaf0; --muted: #98a1b3; --line: #2a313d; --accent: #7b8ff5; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 120px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 28px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; }
+  .svc-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; user-select: none; }
+  .svc-head input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+  .svc-name { font-weight: 600; }
+  .svc-label { color: var(--muted); font-size: .9rem; }
+  .svc-status { margin-left: auto; font-size: .85rem; text-align: right; }
+  .svc-body { padding: 0 16px 16px 48px; display: none; }
+  .card.on .svc-body { display: block; }
+  label.field { display: block; margin: 10px 0; }
+  label.field span { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=password], input[type=url] {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input:disabled { opacity: .7; }
+  .hint { font-size: .82rem; color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+           padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .55; cursor: default; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  .notice { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); margin: 12px 0; }
+  .notice.warn { border-color: var(--warn); } .notice.err { border-color: var(--err); }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); }
+  .bar-inner { max-width: 760px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .bar-inner .spacer { flex: 1; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .done { display: none; }
+  @media (max-width: 540px) { .svc-body { padding-left: 16px; } .svc-label { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>arrstack-mcp setup</h1>
+  <p class="lead">Tick the services you use, fill in their address and API key, test, then save.
+    Only ticked services become tools for your AI assistant.</p>
+  <div id="notices"></div>
+  <div class="row">
+    <button id="discover" type="button">🔎 Find my services</button>
+    <span id="discover-status" class="hint"></span>
+  </div>
+  <div id="groups"></div>
+  <h2>Safety</h2>
+  <div class="card"><label class="svc-head">
+    <input type="checkbox" id="destructive">
+    <span><span class="svc-name">Allow delete tools</span><br>
+    <span class="hint">Removing torrents, queue items or movie/episode files. Untick for an add-and-browse-only assistant.</span></span>
+  </label></div>
+  <section class="done" id="done">
+    <h2>Saved</h2>
+    <div class="notice"><b class="ok">✅ Saved.</b> The server is restarting with your choices.<br>
+      <span class="hint" id="saved-path"></span></div>
+    <p>Connect your AI app to this server (Streamable HTTP):</p>
+    <pre id="mcp-url"></pre>
+    <p class="hint">Claude Code: <code id="claude-cmd"></code><br>
+      Re-open setup later with the new link from the server log (it changes on every restart).</p>
+  </section>
+</main>
+<div class="bar"><div class="bar-inner">
+  <span id="count" class="hint"></span><span class="spacer"></span>
+  <span id="save-status" class="hint"></span>
+  <button class="primary" id="save" type="button">Save &amp; restart</button>
+</div></div>
+
+<script>
+"use strict";
+const TOKEN = __SETUP_TOKEN__;
+history.replaceState(null, "", location.pathname);  // keep the token out of the address bar/history
+
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const child of children) if (child != null) node.append(child);
+  return node;
+};
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "X-Setup-Token": TOKEN, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+let state;
+const inputs = {};   // env -> input element
+
+function notice(text, kind) { $("#notices").append(el("div", { className: `notice ${kind}`, textContent: text })); }
+
+function serviceValues(service) {
+  const values = {};
+  for (const field of service.fields) values[field.env] = inputs[field.env].value;
+  return values;
+}
+
+function setStatus(service, text, kind) {
+  const node = document.getElementById(`status-${service.key}`);
+  node.textContent = text; node.className = `svc-status ${kind || "hint"}`;
+}
+
+function render() {
+  const groups = $("#groups");
+  const byGroup = new Map();
+  for (const s of state.services) {
+    if (!byGroup.has(s.group)) byGroup.set(s.group, []);
+    byGroup.get(s.group).push(s);
+  }
+  for (const [group, services] of byGroup) {
+    groups.append(el("h2", { textContent: group }));
+    for (const s of services) {
+      const box = el("input", { type: "checkbox", checked: s.enabled });
+      const card = el("div", { className: "card" + (s.enabled ? " on" : "") });
+      box.addEventListener("change", () => { card.classList.toggle("on", box.checked); updateCount(); });
+      s.checkbox = box;
+      const head = el("label", { className: "svc-head" }, box,
+        el("span", {}, el("span", { className: "svc-name", textContent: s.name }), " ",
+          el("span", { className: "svc-label", textContent: "· " + s.label })),
+        el("span", { id: `status-${s.key}`, className: "svc-status hint" }));
+      const body = el("div", { className: "svc-body" });
+      for (const f of s.fields) {
+        const input = el("input", {
+          type: f.secret ? "password" : (f.url ? "url" : "text"),
+          value: f.value, autocomplete: "off", spellcheck: false, disabled: f.locked,
+          placeholder: f.secret ? (f.is_set ? "•••••• (saved; leave blank to keep)" : "") : (f.placeholder || ""),
+        });
+        inputs[f.env] = input;
+        const note = f.locked ? " — set by an environment variable, change it there" : "";
+        body.append(el("label", { className: "field" }, el("span", { textContent: f.label + note }), input));
+      }
+      const test = el("button", { type: "button", textContent: "Test connection" });
+      test.addEventListener("click", () => runTest(s, test));
+      body.append(el("div", { className: "row" }, test,
+        el("span", { className: "hint", textContent: "Key: " + s.key_help })));
+      card.append(head, body);
+      groups.append(card);
+    }
+  }
+  $("#destructive").checked = state.allow_destructive;
+  $("#destructive").disabled = state.destructive_locked;
+  if (state.enabled_locked) notice("ENABLED_SERVICES is set by an environment variable (e.g. in your compose file), so it overrides the ticks below. Remove it there to choose services here.", "warn");
+  for (const p of state.problems) notice("Config problem: " + p, "err");
+  updateCount();
+}
+
+function updateCount() {
+  const n = state.services.filter((s) => s.checkbox.checked).length;
+  $("#count").textContent = `${n} service${n === 1 ? "" : "s"} selected`;
+}
+
+async function runTest(service, button) {
+  button.disabled = true; setStatus(service, "Testing…");
+  try {
+    const r = await api("/setup/api/test", { service: service.key, values: serviceValues(service) });
+    const icon = { ok: "✅", warning: "⚠️", error: "❌" }[r.status] || "";
+    setStatus(service, `${icon} ${r.detail}`, { ok: "ok", warning: "warn", error: "err" }[r.status]);
+  } catch (e) { setStatus(service, "❌ " + e.message, "err"); }
+  button.disabled = false;
+}
+
+$("#discover").addEventListener("click", async (event) => {
+  event.target.disabled = true; $("#discover-status").textContent = "Looking at the usual container names and localhost…";
+  try {
+    const found = await api("/setup/api/discover", {});
+    let n = 0;
+    for (const s of state.services) {
+      const url = found[s.key]; if (!url) continue;
+      const input = inputs[s.fields[0].env];
+      if (!input.disabled && !input.value) input.value = url;
+      if (!s.checkbox.checked) { s.checkbox.checked = true; s.checkbox.dispatchEvent(new Event("change")); }
+      setStatus(s, "found at " + url); n++;
+    }
+    $("#discover-status").textContent = n ? `Found ${n}. Add their API keys and test.` : "Nothing found; enter addresses by hand.";
+  } catch (e) { $("#discover-status").textContent = "❌ " + e.message; }
+  event.target.disabled = false;
+});
+
+$("#save").addEventListener("click", async () => {
+  const enabled = state.services.filter((s) => s.checkbox.checked);
+  if (!enabled.length) { $("#save-status").textContent = "Tick at least one service."; return; }
+  const values = {};
+  for (const s of enabled) Object.assign(values, serviceValues(s));
+  $("#save").disabled = true; $("#save-status").textContent = "Saving…";
+  try {
+    const r = await api("/setup/api/save", {
+      enabled: enabled.map((s) => s.key), values, allow_destructive: $("#destructive").checked,
+    });
+    $("#save-status").textContent = "";
+    $("#saved-path").textContent = `Config file: ${r.path}` + (r.backup ? ` (previous version kept as ${r.backup})` : "");
+    $("#mcp-url").textContent = r.mcp_url;
+    $("#claude-cmd").textContent = `claude mcp add --transport http arrstack ${r.mcp_url}`;
+    $("#done").style.display = "block"; $("#done").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { $("#save-status").textContent = "❌ " + e.message; $("#save").disabled = false; }
+});
+
+api("/setup/api/state").then((s) => { state = s; render(); })
+  .catch((e) => notice("Could not load settings: " + e.message, "err"));
+</script>
+</body>
+</html>

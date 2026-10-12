@@ -15,6 +15,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import re
 import shlex
 import sys
 from dataclasses import dataclass, field
@@ -55,6 +56,39 @@ class Prompter:
             if answer in ("y", "yes", "n", "no"):
                 return answer.startswith("y")
             self.out("Please answer y or n.")
+
+    def pick_services(self, defaults: list[str]) -> list[str]:
+        """Numbered, grouped service list; answer with numbers or names."""
+        services = sorted(config.SERVICES.values(), key=lambda s: config.GROUP_ORDER.index(s.group))
+        self.out("Which services do you use?")
+        group = None
+        for number, service in enumerate(services, 1):
+            if service.group != group:
+                group = service.group
+                self.out(f"  {group}")
+            self.out(f"    {number:2}) {service.name:<12} {service.label}")
+        default = ",".join(str(n) for n, s in enumerate(services, 1) if s.key in defaults)
+        while True:
+            answer = self.ask("Numbers or names, comma-separated", default)
+            picked, unknown = [], []
+            for token in re.split(r"[,\s]+", answer.strip().lower()):
+                if not token:
+                    continue
+                if token.isdigit() and 1 <= int(token) <= len(services):
+                    key = services[int(token) - 1].key
+                else:
+                    key = config.SERVICE_ALIASES.get(token, token)
+                    if key not in config.SERVICES:
+                        unknown.append(token)
+                        continue
+                if key not in picked:
+                    picked.append(key)
+            if unknown:
+                self.out(f"Unknown: {', '.join(unknown)}. Use the numbers or names above.")
+            elif not picked:
+                self.out("Pick at least one service.")
+            else:
+                return picked
 
     def choose(self, question: str, options: str, default: str) -> str:
         while True:
@@ -117,7 +151,7 @@ def _configure_service(service: config.Service, values: dict[str, str], prompter
             return False
 
 
-def _write_private(path: Path, text: str) -> Path | None:
+def write_private(path: Path, text: str) -> Path | None:
     """Write with mode 600; back up an existing file first. Returns the backup path."""
     backup = None
     if path.exists():
@@ -155,24 +189,21 @@ def run_setup(loaded: config.LoadedConfig, output: Path, fmt: str = "toml", prom
         "Will arrstack-mcp run in Docker on the same network as your services?", bool(discovered)
     )
 
+    defaults = [k for k, s in config.SERVICES.items()
+                if loaded.values.get(s.url.env) or working.get(s.url.env) or k in discovered]
+    chosen = prompter.pick_services(defaults)
     configured = []
-    for service in config.SERVICES.values():
-        present = bool(working.get(service.url.env)) or service.key in discovered
-        label = f"{service.name} ({service.label})"
-        if not prompter.confirm(f"\nSet up {label}?", present):
-            continue
-        if _configure_service(service, working, prompter, in_docker, discovered.get(service.key), transport, timeout):
-            configured.append(service.key)
+    for key in chosen:
+        service = config.SERVICES[key]
+        prompter.out(f"\n{service.name} ({service.label})")
+        if _configure_service(service, working, prompter, in_docker, discovered.get(key), transport, timeout):
+            configured.append(key)
 
-    if not configured and not any(working.get(s.url.env) for s in config.SERVICES.values()):
+    if not configured:
         prompter.out("\nNothing configured; no file written.")
         return None
-
-    enabled = working.get("ENABLED_SERVICES", "auto").strip().lower()
-    if enabled not in ("", "auto", "all"):
-        listed = [item.strip() for item in enabled.split(",") if item.strip()]
-        listed += [key for key in configured if key not in {config.SERVICE_ALIASES.get(i, i) for i in listed}]
-        working["ENABLED_SERVICES"] = ",".join(listed)
+    # Only the picked services become tools; others keep their saved values.
+    working["ENABLED_SERVICES"] = ",".join(configured)
 
     allow = prompter.confirm("\nAllow tools that delete downloads or library files?",
                              working.get("ALLOW_DESTRUCTIVE", "true").lower() != "false")
@@ -183,7 +214,7 @@ def run_setup(loaded: config.LoadedConfig, output: Path, fmt: str = "toml", prom
         prompter.out("Not written.")
         return None
     text = config.render_toml(working) if fmt == "toml" else config.render_env(working)
-    backup = _write_private(output, text)
+    backup = write_private(output, text)
     prompter.out(f"\n✅ Wrote {output} (mode 600)" + (f"; previous version saved as {backup.name}" if backup else ""))
     prompter.out(client_snippets(output, fmt))
     return SetupResult(output, working, configured, backup)

@@ -82,6 +82,7 @@ class Service:
     hostnames: tuple[str, ...]  # common Docker container names
     key_help: str  # where to find the credential in the service's UI
     aliases: tuple[str, ...] = ()
+    group: str = "Other"  # heading in the setup page
     credential_check: Callable[[Mapping[str, str]], list[tuple[str, str]]] | None = None
 
     @property
@@ -131,21 +132,25 @@ SERVICES: dict[str, Service] = {
             "sonarr", "Sonarr", "TV Shows", "sonarr_",
             (_url("SONARR_URL", "Sonarr", 8989), _api_key("SONARR_API_KEY", "Sonarr", "Settings → General")),
             8989, ("sonarr",), "Settings → General → API Key",
+            group="Movies & TV",
         ),
         Service(
             "radarr", "Radarr", "Movies", "radarr_",
             (_url("RADARR_URL", "Radarr", 7878), _api_key("RADARR_API_KEY", "Radarr", "Settings → General")),
             7878, ("radarr",), "Settings → General → API Key",
+            group="Movies & TV",
         ),
         Service(
             "lidarr", "Lidarr", "Music", "lidarr_",
             (_url("LIDARR_URL", "Lidarr", 8686), _api_key("LIDARR_API_KEY", "Lidarr", "Settings → General")),
             8686, ("lidarr",), "Settings → General → API Key",
+            group="Music & books",
         ),
         Service(
             "prowlarr", "Prowlarr", "Indexer Manager", "prowlarr_",
             (_url("PROWLARR_URL", "Prowlarr", 9696), _api_key("PROWLARR_API_KEY", "Prowlarr", "Settings → General")),
             9696, ("prowlarr",), "Settings → General → API Key",
+            group="Movies & TV",
         ),
         Service(
             "qbittorrent", "qBittorrent", "Downloads", "qbt_",
@@ -159,6 +164,7 @@ SERVICES: dict[str, Service] = {
             ),
             8080, ("qbittorrent", "qbt"), "Settings → Web UI → Authentication",
             aliases=("qbt",),
+            group="Downloads",
         ),
         Service(
             "rdtclient", "RDTClient", "Real-Debrid / AllDebrid downloader", "rdt_",
@@ -173,12 +179,14 @@ SERVICES: dict[str, Service] = {
             ),
             6500, ("rdtclient", "rdt-client"), "Settings → General → Authentication",
             aliases=("rdt",),
+            group="Downloads",
         ),
         Service(
             "sabnzbd", "SABnzbd", "Usenet Downloads", "sab_",
             (_url("SAB_URL", "SABnzbd", 8080), _api_key("SAB_API_KEY", "SABnzbd", "Config → General → API Key")),
             8080, ("sabnzbd",), "Config → General → API Key",
             aliases=("sab",),
+            group="Downloads",
         ),
         Service(
             "jellyfin", "Jellyfin", "Media Streaming", "jellyfin_",
@@ -189,6 +197,7 @@ SERVICES: dict[str, Service] = {
                         secret=True, need="recommended"),
             ),
             8096, ("jellyfin",), "Dashboard → API Keys → Add",
+            group="Media server",
         ),
         Service(
             "romm", "RomM", "ROM Library", "romm_",
@@ -203,6 +212,7 @@ SERVICES: dict[str, Service] = {
             ),
             8081, ("romm",), "User profile → API Tokens",
             credential_check=_romm_credentials,
+            group="Games",
         ),
         Service(
             "gamevault", "GameVault", "PC Game Library", "gamevault_",
@@ -210,6 +220,7 @@ SERVICES: dict[str, Service] = {
              _api_key("GAMEVAULT_API_KEY", "GameVault", "Admin panel → API Keys")),
             8082, ("gamevault-backend", "gamevault"), "Admin panel → API Keys",
             aliases=("game-vault",),
+            group="Games",
         ),
         Service(
             "bookshelf", "Bookshelf", "Books — pennydreadful/bookshelf, Hardcover-flavored Readarr fork",
@@ -217,6 +228,7 @@ SERVICES: dict[str, Service] = {
             (_url("BOOKSHELF_URL", "Bookshelf", 8787),
              _api_key("BOOKSHELF_API_KEY", "Bookshelf", "Settings → General")),
             8787, ("bookshelf", "readarr"), "Settings → General → API Key (same as Readarr)",
+            group="Music & books",
         ),
         Service(
             "seerr", "Seerr", "Media Requests: Overseerr / Jellyseerr", "seerr_",
@@ -225,9 +237,12 @@ SERVICES: dict[str, Service] = {
                      example="http://localhost:5055", url=True),
              _api_key("SEERR_API_KEY", "Seerr", "Settings → General")),
             5055, ("seerr", "jellyseerr", "overseerr"), "Settings → General → API Key",
+            group="Movies & TV",
         ),
     )
 }
+
+GROUP_ORDER = ("Movies & TV", "Downloads", "Media server", "Music & books", "Games", "Other")
 
 SERVICE_ALIASES = {alias: s.key for s in SERVICES.values() for alias in s.aliases}
 
@@ -247,6 +262,11 @@ SERVER_SETTINGS: tuple[Setting, ...] = (
             "Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*`",
             default="localhost:*,127.0.0.1:*,[::1]:*", required="For HTTP/SSE",
             comment="Comma-separated Host headers accepted by HTTP/SSE transports."),
+    Setting("SETUP_UI", "setup_ui",
+            "Web setup page at `/setup` on the HTTP transports: `auto` (default, on) or `false`",
+            default="auto",
+            comment="Web setup page at /setup (HTTP transports only; the link with a one-time token\n"
+                    "is printed in the server log). Set to false to disable it."),
     Setting("LOG_LEVEL", "log_level",
             "Logging level (default: `INFO`; credentials are masked)", default="INFO"),
 )
@@ -345,7 +365,7 @@ def _toml_value(value, label: str, problems: list[str]) -> str | None:
     return None
 
 
-def _read_toml(path: str, problems: list[str]) -> dict:
+def _read_toml(path: str, problems: list[str], missing_ok: bool = False) -> dict:
     if tomllib is None:
         problems.append(f"{path}: reading a TOML config needs Python 3.11+ or `pip install tomli`")
         return {}
@@ -353,7 +373,8 @@ def _read_toml(path: str, problems: list[str]) -> dict:
         with open(Path(path).expanduser(), "rb") as handle:
             return tomllib.load(handle)
     except FileNotFoundError:
-        problems.append(f"config file not found: {path}")
+        if not missing_ok:
+            problems.append(f"config file not found: {path}")
     except OSError as error:
         problems.append(f"cannot read config file {path}: {error.strerror or error}")
     except tomllib.TOMLDecodeError as error:
@@ -403,10 +424,14 @@ def url_problem(setting: Setting, value: str) -> str | None:
     return None
 
 
-def load(environ: Mapping[str, str], path: str | None = None) -> LoadedConfig:
-    """Resolve every setting. Never raises: problems are collected for the caller."""
+def load(environ: Mapping[str, str], path: str | None = None, missing_ok: bool = False) -> LoadedConfig:
+    """Resolve every setting. Never raises: problems are collected for the caller.
+
+    With missing_ok, a config file that doesn't exist yet is not a problem
+    (the setup page creates it on first save).
+    """
     problems: list[str] = []
-    file_values = _file_values(_read_toml(path, problems), path, problems) if path else {}
+    file_values = _file_values(_read_toml(path, problems, missing_ok), path, problems) if path else {}
     values: dict[str, str] = {}
     sources: dict[str, str] = {}
     for setting in ALL_SETTINGS:
