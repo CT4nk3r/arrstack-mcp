@@ -1,6 +1,9 @@
 services:
   arrstack-mcp:
-    build: .
+    # Published image; update with `docker compose pull && docker compose up -d`.
+    # Pin a version (e.g. :1.0) to avoid surprises, or use :edge for the latest main.
+    image: ghcr.io/ct4nk3r/arrstack-mcp:latest
+    # To build from this checkout instead, replace `image:` with `build: .`
     container_name: arrstack-mcp
     ports:
       # Published on localhost only: this server has no authentication, and

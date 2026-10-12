@@ -123,17 +123,27 @@ block with `SONARR_URL`, `SONARR_API_KEY`, ...); see [Configuration](#configurat
 
 For remote clients, or to sit next to your *arr containers:
 
+No clone needed: the image is published at `ghcr.io/ct4nk3r/arrstack-mcp`
+(amd64 + arm64).
+
 ```bash
-git clone https://github.com/ct4nk3r/arrstack-mcp.git
-cd arrstack-mcp
-cp .env.example .env        # fill in the services you use
-# or: python server.py --setup --format env --output .env
+mkdir arrstack-mcp && cd arrstack-mcp
+curl -fsSLO https://raw.githubusercontent.com/ct4nk3r/arrstack-mcp/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/ct4nk3r/arrstack-mcp/main/.env.example -o .env
+# edit .env: fill in the services you use
 docker compose up -d
 docker compose exec arrstack-mcp python server.py --check
 ```
 
 The bundled `docker-compose.yml` loads `.env` with `env_file:` (or mount a TOML
-file, see the comments in it). The server listens on port `8000` with
+file, see the comments in it).
+
+**Updating:** `docker compose pull && docker compose up -d`. Image tags:
+`latest` (newest release), `1` / `1.2` / `1.2.3` (pin a release line or
+version), `edge` (every commit to `main`, may break). To hear about new
+versions, use GitHub's **Watch → Custom → Releases** on this repo and read the
+release notes before updating; tools like Watchtower or Diun can also watch
+the image for you. The server listens on port `8000` with
 Streamable HTTP at `/mcp`; start it with `--transport sse` for legacy clients
 that only speak SSE (endpoint `/sse`). Inside Docker, use container names in
 URLs (`http://sonarr:8989`), not `localhost`, and put `arrstack-mcp` on the same
