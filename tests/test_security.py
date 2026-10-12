@@ -17,12 +17,12 @@ class SecurityTests(unittest.TestCase):
     def setUp(self):
         self.sonarr_url = server.SONARR_URL
         self.qbt_url = server.QBT_URL
-        self.qbt_sid = server._qbt_sid
+        self.qbt_cookies = server._qbt_cookies
 
     def tearDown(self):
         server.SONARR_URL = self.sonarr_url
         server.QBT_URL = self.qbt_url
-        server._qbt_sid = self.qbt_sid
+        server._qbt_cookies = self.qbt_cookies
 
     @patch("server.httpx.request")
     def test_search_term_is_passed_as_query_parameter(self, request):
@@ -39,9 +39,9 @@ class SecurityTests(unittest.TestCase):
     @patch("server.httpx.post")
     def test_qbt_retries_only_once_after_403(self, post, request):
         server.QBT_URL = "http://qbittorrent:8080"
-        server._qbt_sid = None
+        server._qbt_cookies = None
         login = response()
-        login.cookies.get.return_value = "sid"
+        login.cookies.items.return_value = [("SID", "sid")]
         post.return_value = login
         request.return_value = response(status_code=403)
 

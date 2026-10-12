@@ -35,16 +35,16 @@ class ConfiguredServices(unittest.TestCase):
 
     def setUp(self):
         self._saved = {name: getattr(server, name) for name in self.URLS}
-        self._saved_sids = (server._qbt_sid, server._rdt_sid)
+        self._saved_sids = (server._qbt_cookies, server._rdt_sid)
         for name, url in self.URLS.items():
             setattr(server, name, url)
-        server._qbt_sid = "sid"
+        server._qbt_cookies = {"SID": "sid"}
         server._rdt_sid = "sid"
 
     def tearDown(self):
         for name, value in self._saved.items():
             setattr(server, name, value)
-        server._qbt_sid, server._rdt_sid = self._saved_sids
+        server._qbt_cookies, server._rdt_sid = self._saved_sids
 
 
 class JsonHandlingTests(ConfiguredServices):

@@ -312,48 +312,53 @@ def _lidarr(path: str, method: str = "GET", json=None, params=None):
     return _arr_request("lidarr", LIDARR_URL, "/api/v1", LIDARR_API_KEY, path, method, json, params)
 
 
-_qbt_sid = None
-_qbt_cookie_name = "SID"
+_qbt_cookies = None  # None = not logged in; {} = logged in without a cookie (auth bypass)
+
+
+def _qbt_session_cookies(login) -> dict | None:
+    """Pick the WebUI session cookie out of a /auth/login response.
+
+    qBittorrent < 5 names it "SID"; 5.x names it "QBT_SID_<port>" so several
+    instances can share a reverse-proxy domain. When the client is whitelisted
+    ("Bypass authentication for clients on localhost / in whitelisted subnets"),
+    login answers "Ok." without setting any cookie and requests work without one.
+    Returns None when the login was rejected.
+    """
+    for name, value in login.cookies.items():
+        if name == "SID" or name.startswith("QBT_SID_"):
+            return {name: value}
+    if (login.text or "").strip().lower() == "ok.":
+        return {}
+    return None
 
 
 def _qbt(path: str, method: str = "GET", data=None, params=None, files=None, _retry: bool = False):
-    global _qbt_sid, _qbt_cookie_name
+    global _qbt_cookies
     if not QBT_URL:
         return "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
     logger.info("qbt %s %s", method, path)
     try:
-        if not _qbt_sid:
+        if _qbt_cookies is None:
             login = httpx.post(
                 f"{QBT_URL}/api/v2/auth/login",
                 data={"username": QBT_USER, "password": QBT_PASS},
                 timeout=10,
             )
             login.raise_for_status()
-            _qbt_sid = login.cookies.get("SID")
-            _qbt_cookie_name = "SID"
-            if not _qbt_sid:
-                for k, v in login.cookies.items():
-                    if "SID" in k.upper():
-                        _qbt_sid = v
-                        _qbt_cookie_name = k
-                        break
-            if not _qbt_sid and (login.status_code in (200, 204) and ("Ok." in login.text or not login.text.strip())):
-                _qbt_sid = "BYPASS"
-                _qbt_cookie_name = None
-            elif not _qbt_sid:
-                return "qBittorrent login failed: no SID cookie returned."
-        cookies = {_qbt_cookie_name: _qbt_sid} if (_qbt_cookie_name and _qbt_sid != "BYPASS") else None
+            _qbt_cookies = _qbt_session_cookies(login)
+            if _qbt_cookies is None:
+                return "qBittorrent login failed: check QBT_USER and QBT_PASS."
         r = httpx.request(
             method,
             f"{QBT_URL}/api/v2{path}",
-            cookies=cookies,
+            cookies=_qbt_cookies or None,
             data=data,
             params=params,
             files=files,
             timeout=30,
         )
         if r.status_code == 403:
-            _qbt_sid = None
+            _qbt_cookies = None
             if _retry:
                 return "qBittorrent auth failure: 403 after retry."
             return _qbt(path, method, data=data, params=params, files=files, _retry=True)
@@ -1721,10 +1726,11 @@ def _qbt_add_result(result):
         # _qbt returns plain-text error messages (not configured, HTTP errors, …).
         return False, text
     if isinstance(result, dict):
+        # Newer WebUI API versions answer /torrents/add with JSON counts.
         if result.get("success_count", 0) > 0 or result.get("added_torrent_ids"):
             return True, ""
         if result.get("failure_count", 0) > 0:
-            return False, f"qBittorrent failed to add torrent: {result}"
+            return False, "qBittorrent rejected it (duplicate or invalid torrent)."
     return False, str(result)
 
 
