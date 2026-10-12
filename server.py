@@ -780,7 +780,7 @@ def sonarr_upcoming(days: int = 7) -> str:
 
     start = datetime.now().strftime("%Y-%m-%d")
     end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-    data = _sonarr("/calendar", params={"start": start, "end": end})
+    data = _sonarr("/calendar", params={"start": start, "end": end, "includeSeries": "true"})
     if isinstance(data, str):
         return data
     lines = []
