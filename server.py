@@ -459,7 +459,7 @@ def _jellyfin(path: str, params=None):
     logger.info("jellyfin GET %s", path)
     headers = {}
     if JELLYFIN_API_KEY:
-        headers["X-Emby-Token"] = JELLYFIN_API_KEY
+        headers["Authorization"] = f'MediaBrowser Token="{JELLYFIN_API_KEY}"'
     try:
         r = httpx.get(f"{JELLYFIN_URL}{path}", headers=headers, params=params, timeout=30)
         r.raise_for_status()
@@ -2351,7 +2351,7 @@ def jellyfin_scan_library() -> str:
     try:
         r = httpx.post(
             f"{JELLYFIN_URL}/Library/Refresh",
-            headers={"X-Emby-Token": JELLYFIN_API_KEY},
+            headers={"Authorization": f'MediaBrowser Token="{JELLYFIN_API_KEY}"'},
             timeout=30,
         )
         r.raise_for_status()

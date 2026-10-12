@@ -49,7 +49,7 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 1. Install dependencies:
 
    ```bash
-   pip install "mcp[cli]>=1.9.0" httpx
+   pip install "mcp[cli]>=1.9.0,<2" httpx
    ```
 
 2. Add to your MCP client config (e.g. `claude_desktop_config.json`):
