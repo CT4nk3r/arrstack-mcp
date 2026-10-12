@@ -76,10 +76,12 @@ _SERVICE_QUERIES = {
     "romm": "list the games in my ROM library",
     "gamevault": "pick a random PC game from my GameVault library",
     "bookshelf": "search for a book to add to my library",
+    "seerr": "request a new movie for the family to watch",
 }
 _QUERY_PRIORITY = [
     "radarr", "sonarr", "qbittorrent", "romm", "lidarr",
     "jellyfin", "gamevault", "prowlarr", "sabnzbd", "rdtclient", "bookshelf",
+    "seerr",
 ]
 _GENERAL_QUERIES = [
     "search and manage my homelab media library",

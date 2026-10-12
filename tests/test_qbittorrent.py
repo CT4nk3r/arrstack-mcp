@@ -191,19 +191,19 @@ class AddErrorHandlingTests(unittest.TestCase):
 class QbtTransportTests(unittest.TestCase):
     def setUp(self):
         self.qbt_url = server.QBT_URL
-        self.qbt_sid = server._qbt_sid
+        self.qbt_cookies = server._qbt_cookies
 
     def tearDown(self):
         server.QBT_URL = self.qbt_url
-        server._qbt_sid = self.qbt_sid
+        server._qbt_cookies = self.qbt_cookies
 
     @patch("server.httpx.request")
     @patch("server.httpx.post")
     def test_qbt_forwards_files_to_request(self, post, request):
         server.QBT_URL = "http://qbittorrent:8080"
-        server._qbt_sid = None
+        server._qbt_cookies = None
         login = Mock()
-        login.cookies.get.return_value = "sid"
+        login.cookies.items.return_value = [("SID", "sid")]
         login.raise_for_status.return_value = None
         post.return_value = login
         result = Mock()
@@ -219,6 +219,64 @@ class QbtTransportTests(unittest.TestCase):
         _, kwargs = request.call_args
         self.assertEqual(kwargs["files"], files)
         self.assertEqual(out, "Ok.")
+
+
+    def _login(self, cookies=(), text="Ok."):
+        login = Mock()
+        login.cookies.items.return_value = list(cookies)
+        login.text = text
+        login.raise_for_status.return_value = None
+        return login
+
+    def _ok(self, data):
+        result = Mock()
+        result.status_code = 200
+        result.json.return_value = data
+        result.raise_for_status.return_value = None
+        return result
+
+    @patch("server.httpx.request")
+    @patch("server.httpx.post")
+    def test_qbt_accepts_port_scoped_sid_cookie(self, post, request):
+        # qBittorrent 5.0+ names the session cookie QBT_SID_<port>.
+        server.QBT_URL = "http://qbittorrent:8181"
+        server._qbt_cookies = None
+        post.return_value = self._login([("QBT_SID_8181", "abc123")])
+        request.return_value = self._ok([])
+
+        out = server._qbt("/torrents/info")
+
+        _, kwargs = request.call_args
+        self.assertEqual(kwargs["cookies"], {"QBT_SID_8181": "abc123"})
+        self.assertEqual(out, [])
+
+    @patch("server.httpx.request")
+    @patch("server.httpx.post")
+    def test_qbt_auth_bypass_login_without_cookie(self, post, request):
+        # Whitelisted clients get "Ok." and no cookie; requests work without one.
+        server.QBT_URL = "http://qbittorrent:8080"
+        server._qbt_cookies = None
+        post.return_value = self._login([], text="Ok.")
+        request.return_value = self._ok([])
+
+        self.assertEqual(server._qbt("/torrents/info"), [])
+        _, kwargs = request.call_args
+        self.assertIsNone(kwargs["cookies"])
+        server._qbt("/torrents/info")
+        self.assertEqual(post.call_count, 1)  # no re-login while the session holds
+
+    @patch("server.httpx.request")
+    @patch("server.httpx.post")
+    def test_qbt_rejected_login_reports_credentials(self, post, request):
+        server.QBT_URL = "http://qbittorrent:8080"
+        server._qbt_cookies = None
+        post.return_value = self._login([("unrelated", "x")], text="Fails.")
+
+        out = server._qbt("/torrents/info")
+
+        self.assertIn("check QBT_USER and QBT_PASS", out)
+        request.assert_not_called()
+        self.assertIsNone(server._qbt_cookies)
 
 
 class MagnetDisplayNameTests(unittest.TestCase):
@@ -241,6 +299,14 @@ class DecodeBase64EdgeTests(unittest.TestCase):
 
 
 class AddResultNormalizationTests(unittest.TestCase):
+    def test_json_add_response_success_and_failure(self):
+        # Newer WebUI API versions answer /torrents/add with JSON counts.
+        self.assertEqual(server._qbt_add_result({"success_count": 1, "failure_count": 0}), (True, ""))
+        self.assertEqual(server._qbt_add_result({"added_torrent_ids": ["abc"]}), (True, ""))
+        ok, detail = server._qbt_add_result({"success_count": 0, "failure_count": 1})
+        self.assertFalse(ok)
+        self.assertIn("rejected", detail)
+
     def test_ok_is_success(self):
         self.assertEqual(server._qbt_add_result("Ok."), (True, ""))
 

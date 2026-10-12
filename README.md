@@ -23,6 +23,7 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 | **RomM** | System info, list platforms, list/search ROMs, game details |
 | **GameVault** | List/search PC games, game details, random game, reindex library |
 | **Bookshelf** | List/search authors & books, queue, missing, profiles, health |
+| **Seerr** | Search movies/TV, request media (with season selection), list/check requests |
 
 Only configure the services you use — unconfigured services are gracefully skipped.
 
@@ -35,137 +36,224 @@ advertised tool catalog is configurable:
 - A comma-separated list such as `sonarr,radarr,romm` advertises exactly that subset.
 - `ENABLED_SERVICES=all` advertises every available tool.
 - Run `python server.py --list-services` to inspect configured/enabled services.
-- Run `python server.py --setup` for an interactive selector that prints the
-  resulting `ENABLED_SERVICES` line.
 
 Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
-`qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`, and
-`bookshelf`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
+`qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`,
+`bookshelf`, and `seerr`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
+
+### Agent behaviour
+
+- `ALLOW_DESTRUCTIVE=false` hides every tool that deletes downloads or library
+  files (`*_delete_queue_item`, `radarr_delete_movie_file`,
+  `sonarr_delete_episode_file`, `qbt_delete`, `rdt_delete`, `sab_delete_job`).
+  Default `true`.
+- `INSTRUCTION_PRESETS` appends opt-in workflow guidance to the server
+  instructions. Available: `hun-ncore` (Hungarian dual-audio releases from nCore:
+  quality-size limits, checking the queue for HuN releases).
+- `EXTRA_INSTRUCTIONS` appends your own free text to the server instructions.
 
 ## Quick Start
 
-### Option 1: Claude Desktop / Cursor / VS Code (stdio)
-
-1. Install dependencies:
-
-   ```bash
-   pip install "mcp[cli]>=1.9.0,<2" httpx
-   ```
-
-2. Add to your MCP client config (e.g. `claude_desktop_config.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "arrstack": {
-         "command": "python",
-         "args": ["/path/to/arrstack-mcp/server.py"],
-         "env": {
-           "SONARR_URL": "http://localhost:8989",
-           "SONARR_API_KEY": "your-api-key",
-           "RADARR_URL": "http://localhost:7878",
-           "RADARR_API_KEY": "your-api-key",
-           "QBT_URL": "http://localhost:8080",
-           "QBT_USER": "admin",
-           "QBT_PASS": "your-password",
-           "JELLYFIN_URL": "http://localhost:8096"
-         }
-       }
-     }
-   }
-   ```
-
-3. Restart your MCP client. Done!
-
-### Option 2: Docker (HTTP transport)
-
-For remote setups or when running alongside your *arr stack:
+### 1. Guided setup (recommended)
 
 ```bash
 git clone https://github.com/ct4nk3r/arrstack-mcp.git
 cd arrstack-mcp
-cp .env.example .env
-# Edit .env with your service URLs and API keys
-docker compose up -d
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python server.py --setup
 ```
 
-The server runs on port `8000` with Streamable HTTP transport.
+The wizard asks for each service's URL and API key (keys are typed without
+echo), **tests every connection as you go**, writes `arrstack.toml` (mode
+600, an existing file is backed up first) and prints the exact snippet for
+Claude Desktop, Cursor, VS Code, Claude Code and Docker.
 
-#### Connect to OpenClaw
+- `--setup --discover` first looks for services at their usual container names
+  (`sonarr`, `radarr`, `qbittorrent`, ...) and on `localhost`, including URL
+  bases such as `/sonarr`, and offers what it finds as defaults. It only probes
+  that fixed list, never your whole network.
+- `--arr-config /path/to/sonarr-config` (repeatable) reads the URL base, port and
+  API key from a Sonarr/Radarr/Lidarr/Prowlarr `config.xml`, so you don't have to
+  copy keys by hand.
+- `--format env --output .env` writes a Docker `env_file` instead of TOML.
+- Afterwards, `python server.py --check --config arrstack.toml` re-tests
+  everything (see [Check your setup](#check-your-setup)).
+
+### 2. Connect your MCP client
+
+With a config file, every client needs just the server path and `--config`:
+
+**Claude Desktop / Cursor** (`claude_desktop_config.json` / `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "arrstack": {
+      "command": "/path/to/arrstack-mcp/.venv/bin/python",
+      "args": ["/path/to/arrstack-mcp/server.py", "--config", "/path/to/arrstack-mcp/arrstack.toml"]
+    }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "arrstack": {
+      "type": "stdio",
+      "command": "/path/to/arrstack-mcp/.venv/bin/python",
+      "args": ["/path/to/arrstack-mcp/server.py", "--config", "/path/to/arrstack-mcp/arrstack.toml"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add arrstack -- /path/to/arrstack-mcp/.venv/bin/python /path/to/arrstack-mcp/server.py --config /path/to/arrstack-mcp/arrstack.toml
+```
+
+You can still pass settings as environment variables instead (an `"env": {...}`
+block with `SONARR_URL`, `SONARR_API_KEY`, ...); see [Configuration](#configuration).
+
+### 3. Or run it in Docker (HTTP transport)
+
+For remote clients, or to sit next to your *arr containers:
+
+```bash
+git clone https://github.com/ct4nk3r/arrstack-mcp.git
+cd arrstack-mcp
+cp .env.example .env        # fill in the services you use
+# or: python server.py --setup --format env --output .env
+docker compose up -d
+docker compose exec arrstack-mcp python server.py --check
+```
+
+The bundled `docker-compose.yml` loads `.env` with `env_file:` (or mount a TOML
+file, see the comments in it). The server listens on port `8000` with
+Streamable HTTP at `/mcp`; start it with `--transport sse` for legacy clients
+that only speak SSE (endpoint `/sse`). Inside Docker, use container names in
+URLs (`http://sonarr:8989`), not `localhost`, and put `arrstack-mcp` on the same
+network as your services:
+
+```yaml
+services:
+  arrstack-mcp:
+    # ...as in docker-compose.yml
+    networks:
+      - your-media-network
+networks:
+  your-media-network:
+    external: true
+```
+
+**OpenClaw:**
 
 ```bash
 openclaw mcp set arrstack '{"url":"http://arrstack-mcp:8000/mcp","transport":"streamable-http"}'
 ```
 
-#### Connect to other HTTP MCP clients
-
-Point your client to `http://<host>:8000/mcp` using Streamable HTTP transport.
-
-### Option 3: Docker on the same network as your *arr stack
-
-If your media services run in Docker, add `arrstack-mcp` to the same network:
-
-```yaml
-services:
-  arrstack-mcp:
-    build: .
-    container_name: arrstack-mcp
-    ports:
-      - "8000:8000"
-    environment:
-      - SONARR_URL=http://sonarr:8989
-      - SONARR_API_KEY=your-key
-      - RADARR_URL=http://radarr:7878
-      - RADARR_API_KEY=your-key
-      - QBT_URL=http://qbittorrent:8080
-      - QBT_USER=admin
-      - QBT_PASS=your-password
-      - JELLYFIN_URL=http://jellyfin:8096
-    networks:
-      - your-media-network
-```
+**Other HTTP MCP clients:** point them at `http://<host>:8000/mcp` (Streamable HTTP).
 
 ## Configuration
 
-All configuration is done via environment variables:
+Every setting is an environment variable (table below). Two optional
+conveniences sit on top:
 
+- **Secret files:** any variable can be read from a file by setting
+  `<NAME>_FILE`, e.g. `SONARR_API_KEY_FILE=/run/secrets/sonarr_api_key`
+  (Docker/Podman secrets).
+- **Config file:** put settings in a TOML file and point the server at it with
+  `--config /path/arrstack.toml` or `ARRSTACK_CONFIG=/path/arrstack.toml`. One
+  section per service, keys in lowercase; `<key>_file` reads a value from a file:
+
+  ```toml
+  [server]
+  enabled_services = "sonarr,radarr,qbittorrent"
+
+  [sonarr]
+  url = "http://sonarr:8989"
+  api_key = "your-api-key"
+
+  [qbittorrent]
+  url = "http://qbittorrent:8080"
+  username = "admin"
+  password_file = "/run/secrets/qbt_password"
+  ```
+
+Precedence, highest first: a non-empty environment variable, `<NAME>_FILE`, the
+config file, the default. Empty variables count as unset, so a compose file
+listing `SONARR_URL=` doesn't hide the config file's value. Invalid values
+(unknown sections or keys, URLs without `http://`, unreadable secret files)
+stop the server at startup with a list of every problem.
+
+<!-- BEGIN CONFIG TABLE (generated from config.py; run tests to check) -->
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ENABLED_SERVICES` | No | `auto` (default), `all`, or a comma-separated service subset |
+| `ALLOW_DESTRUCTIVE` | No | `false` hides tools that delete downloads or library files (default `true`) |
+| `INSTRUCTION_PRESETS` | No | Comma-separated opt-in instruction presets (e.g. `hun-ncore`) |
+| `EXTRA_INSTRUCTIONS` | No | Free text appended to the server instructions |
+| `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
+| `LOG_LEVEL` | No | Logging level (default: `INFO`; credentials are masked) |
 | `SONARR_URL` | No | Sonarr base URL (e.g. `http://localhost:8989`) |
 | `SONARR_API_KEY` | If Sonarr | Sonarr API key (Settings → General) |
 | `RADARR_URL` | No | Radarr base URL (e.g. `http://localhost:7878`) |
 | `RADARR_API_KEY` | If Radarr | Radarr API key (Settings → General) |
 | `LIDARR_URL` | No | Lidarr base URL (e.g. `http://localhost:8686`) |
 | `LIDARR_API_KEY` | If Lidarr | Lidarr API key (Settings → General) |
+| `PROWLARR_URL` | No | Prowlarr base URL (e.g. `http://localhost:9696`) |
+| `PROWLARR_API_KEY` | If Prowlarr | Prowlarr API key (Settings → General) |
 | `QBT_URL` | No | qBittorrent Web UI URL (e.g. `http://localhost:8080`) |
 | `QBT_USER` | If qBt | qBittorrent username (default: `admin`) |
 | `QBT_PASS` | If qBt | qBittorrent password |
 | `RDT_URL` | No | RDTClient base URL (e.g. `http://localhost:6500`) |
 | `RDT_USER` | If RDT login | RDTClient username (default: `admin`) |
 | `RDT_PASS` | If RDT login | RDTClient password |
+| `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
+| `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `JELLYFIN_URL` | No | Jellyfin base URL (e.g. `http://localhost:8096`) |
-| `JELLYFIN_API_KEY` | No | Jellyfin API key (optional, for authenticated endpoints) |
-| `PROWLARR_URL` | No | Prowlarr base URL (e.g. `http://localhost:9696`) |
-| `PROWLARR_API_KEY` | If Prowlarr | Prowlarr API key (Settings → General) |
+| `JELLYFIN_API_KEY` | No | Jellyfin API key (needed for libraries, recent items and library scans) |
 | `ROMM_URL` | No | RomM base URL (e.g. `http://localhost:8081`) |
 | `ROMM_API_TOKEN` | If RomM | RomM bearer token; alternatively use `ROMM_USER` and `ROMM_PASS` |
 | `ROMM_USER` | If RomM basic auth | RomM username |
 | `ROMM_PASS` | If RomM basic auth | RomM password |
 | `GAMEVAULT_URL` | No | GameVault server URL (e.g. `http://localhost:8082`) |
-| `GAMEVAULT_API_KEY` | If GameVault | GameVault API key |
-| `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
-| `LOG_LEVEL` | No | Request logging level (default: `INFO`; credentials are never logged) |
+| `GAMEVAULT_API_KEY` | If GameVault | GameVault API key (Admin panel → API Keys) |
+| `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
+| `BOOKSHELF_API_KEY` | If Bookshelf | Bookshelf API key (Settings → General) |
+| `SEERR_URL` | No | Seerr / Overseerr / Jellyseerr base URL (e.g. `http://localhost:5055`) |
+| `SEERR_API_KEY` | If Seerr | Seerr API key (Settings → General) |
 | `ARD_ENABLED` | No | Agentic Resource Discovery publishing: `auto` (default; on for HTTP transports), `true`, or `false` |
 | `ARD_PUBLIC_URL` | No | Public base URL clients reach this server at (e.g. `https://arrstack.example.com`); advertises an absolute connection endpoint inside the card. Leave blank if the server is private. |
 | `ARD_DOMAIN` | No | Publisher domain for the `urn:air` logical identifier (defaults to the host of `ARD_PUBLIC_URL`, else `localhost`) |
 | `ARD_HOST_NAME` | No | Human-readable catalog host name (default: `arrstack-mcp`) |
 | `ARD_EMBED_CARD` | No | `auto` (embed the server card inline only when `ARD_PUBLIC_URL` is unset), `true` (always embed — best for static hosting), or `false` (always reference it by URL) |
 | `ARD_DID_WEB` | No | Opt-in `did:web` host identity (e.g. `arrstack.example.com`). Only set for a domain whose root you control and where you host a `/.well-known/did.json`; otherwise left off |
-| `SAB_URL` | No | SABnzbd base URL (e.g. `http://localhost:8080`) |
-| `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
-| `BOOKSHELF_URL` | No | Bookshelf base URL (e.g. `http://localhost:8787`) |
-| `BOOKSHELF_API_KEY` | If Bookshelf | Bookshelf API key (Settings → General) |
+<!-- END CONFIG TABLE -->
+
+### Check your setup
+
+`python server.py --check` tests every service with the same settings the server
+would use and tells you what to fix:
+
+```text
+  ✅ sonarr       Sonarr 4.0.9.2244 at http://sonarr:8989/sonarr
+  ❌ radarr       credentials rejected (HTTP 401): check RADARR_API_KEY (Settings → General → API Key)
+  ⚠️ jellyfin     Jellyfin 10.11.8 at http://jellyfin:8096; JELLYFIN_API_KEY is empty; ...
+  ⏸️ lidarr       configured but excluded by ENABLED_SERVICES
+  ·  sabnzbd      not configured (set SAB_URL)
+```
+
+It catches wrong URL bases (HTTP 404), login pages in front of the API,
+rejected keys, a URL pointing at the wrong app, and unreachable hosts
+(`localhost` inside a container). It only makes read-only requests (plus the
+qBittorrent/RDTClient login), never prints credentials, and exits with status 1
+when an enabled service is broken. Add `--json` for scripts. In Docker:
+`docker compose exec arrstack-mcp python server.py --check`.
 
 ## Available Tools
 
@@ -179,6 +267,19 @@ All configuration is done via environment variables:
 | `sonarr_add_series` | Add a show by TVDB ID |
 | `sonarr_upcoming` | Show upcoming episodes |
 | `sonarr_queue` | Show current download queue |
+| `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
+| `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
+| `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
+| `sonarr_search_missing` | Search missing episodes for one series or all |
+| `sonarr_update_series` | Change a series' quality profile or monitored status |
+| `sonarr_list_quality_profiles` | List quality profiles |
+| `sonarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
+| `sonarr_set_quality_definition` | Change size limits for a quality tier |
+| `sonarr_list_custom_formats` | List custom formats |
+| `sonarr_set_quality_profile_qualities` | Enable/disable qualities or quality groups in a profile |
+| `sonarr_list_tags` | List tags with how many series use each |
+| `sonarr_list_series_by_tag` | List series carrying a tag (e.g. a Seerr requester tag) |
+| `sonarr_set_series_tags` | Add, remove or set tags (missing tags are created) |
 
 ### Radarr (Movies)
 
@@ -189,6 +290,18 @@ All configuration is done via environment variables:
 | `radarr_search` | Search for new movies to add |
 | `radarr_add_movie` | Add a movie by TMDB ID |
 | `radarr_queue` | Show current download queue |
+| `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
+| `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
+| `radarr_search_missing` | Search specific movies, or all monitored missing movies |
+| `radarr_update_movie` | Change a movie's quality profile or monitored status |
+| `radarr_list_quality_profiles` | List quality profiles |
+| `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
+| `radarr_set_quality_definition` | Change size limits for a quality tier |
+| `radarr_list_custom_formats` | List custom formats |
+| `radarr_set_quality_profile_qualities` | Enable/disable qualities or quality groups in a profile |
+| `radarr_list_tags` | List tags with how many movies use each |
+| `radarr_list_movies_by_tag` | List movies carrying a tag (e.g. a Seerr requester tag) |
+| `radarr_set_movie_tags` | Add, remove or set tags (missing tags are created) |
 
 ### Lidarr (Music)
 
@@ -214,6 +327,7 @@ All configuration is done via environment variables:
 | `prowlarr_test_indexer` | Test a specific indexer connection |
 | `prowlarr_test_all_indexers` | Test all enabled indexers |
 | `prowlarr_search` | Search across indexers for releases |
+| `prowlarr_grab` | Send a result from the last search to qBittorrent |
 | `prowlarr_health` | Check system health warnings |
 
 ### qBittorrent (Downloads)
@@ -268,6 +382,21 @@ API, so it slots into Sonarr/Radarr just like qBt.
 | `jellyfin_libraries` | List media libraries |
 | `jellyfin_recent` | Recently added items |
 | `jellyfin_system_info` | Server version and system info |
+| `jellyfin_scan_library` | Trigger a library scan (needs `JELLYFIN_API_KEY`) |
+
+### Seerr (Media Requests)
+
+Seerr (and its predecessors Overseerr /
+Jellyseerr) lets household members request media; approved requests flow into
+Sonarr/Radarr.
+
+| Tool | Description |
+|------|-------------|
+| `seerr_search` | Search movies and TV shows, returns TMDB IDs |
+| `seerr_request_movie` | Request a movie by TMDB ID |
+| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection |
+| `seerr_list_requests` | List requests, filterable by status |
+| `seerr_request_status` | Get the status of a specific request |
 
 ### RomM (ROM Library)
 
@@ -493,6 +622,7 @@ is unset). See [`examples/`](examples/) for sample output.
 - **RomM**: User profile → API Tokens, or configure `ROMM_USER` and `ROMM_PASS`
 - **GameVault**: Admin panel → API Keys
 - **Bookshelf**: Settings → General → API Key (same as Readarr)
+- **Seerr**: Settings → General → API Key
 
 ## Security
 
@@ -501,13 +631,20 @@ provide authentication by itself. Anyone who can reach that port can invoke
 tools using the configured service credentials.
 
 - Prefer stdio for same-machine clients.
+- The bundled `docker-compose.yml` publishes port `8000` on `127.0.0.1` only.
+  Other containers on the same Docker network can still reach it by name.
+- `qbt_add` / `qbt_add_torrent_file` only read local files whose names end in
+  `.torrent`. They will still fetch any http(s) URL you (or the model) give them,
+  including hosts on your LAN, because Prowlarr download links live there.
 - For remote access, restrict port `8000` to Tailscale or place it behind an
   authenticated reverse proxy.
 - DNS-rebinding protection is enabled. Set `MCP_ALLOWED_HOSTS` to the exact
   hostnames or IP addresses clients use, with optional wildcard ports:
   `localhost:*,127.0.0.1:*,arrstack-mcp:*,100.64.0.1:*`.
 - The Docker image runs as non-root user `appuser` with UID `1000`.
-- API keys and request headers are never logged.
+- Credentials are kept out of logs and tool output: request URLs are not
+  logged (some APIs put the key in the query string), and `apikey=`-style
+  values plus every configured key/password (6+ characters) are masked as `***`.
 
 ## License
 

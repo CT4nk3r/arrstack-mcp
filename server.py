@@ -7,6 +7,8 @@ search, add, and manage your media library.
 """
 
 import os
+import pathlib
+import re
 import sys
 import json
 import base64
@@ -22,49 +24,113 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse, Response
 
 import ard
+import config
+import discover
+import doctor
+import wizard
 
+# ── Configuration ──
+# Every setting is declared in config.py; values come from the environment,
+# <VAR>_FILE secret files, or an optional TOML file (--config / ARRSTACK_CONFIG).
+# Loading never raises: problems are reported by main() and --check.
+_CONFIG = config.load(
+    os.environ, config.config_path(os.environ, sys.argv[1:] if __name__ == "__main__" else ())
+)
+SETTINGS = _CONFIG.values
+CONFIG_PROBLEMS = _CONFIG.problems
+
+_LOG_LEVEL = SETTINGS["LOG_LEVEL"].strip().upper()
+if _LOG_LEVEL not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+    CONFIG_PROBLEMS.append(f"LOG_LEVEL: unknown level '{SETTINGS['LOG_LEVEL']}'")
+    _LOG_LEVEL = "INFO"
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=_LOG_LEVEL,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("arrstack-mcp")
+# httpx logs every request URL at INFO, and some APIs (SABnzbd, Prowlarr
+# download links) carry the API key in the query string. Our own helpers log
+# method + path only.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# ── Configuration ──
+# Settings whose values must never appear in logs or tool output.
+_SECRET_SETTINGS = config.SECRET_ENVS
+_SECRET_PARAM = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|token|password|passwd|pass|sid)=([^&\s\"']+)"
+)
+# Shorter values (e.g. a password like "admin") would mask ordinary words.
+_MIN_LITERAL_SECRET = 6
 
-SONARR_URL = os.environ.get("SONARR_URL", "").rstrip("/")
-SONARR_API_KEY = os.environ.get("SONARR_API_KEY", "")
-RADARR_URL = os.environ.get("RADARR_URL", "").rstrip("/")
-RADARR_API_KEY = os.environ.get("RADARR_API_KEY", "")
-LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
-LIDARR_API_KEY = os.environ.get("LIDARR_API_KEY", "")
-QBT_URL = os.environ.get("QBT_URL", "").rstrip("/")
-QBT_USER = os.environ.get("QBT_USER", "admin")
-QBT_PASS = os.environ.get("QBT_PASS", "")
-RDT_URL = os.environ.get("RDT_URL", "").rstrip("/")
-RDT_USER = os.environ.get("RDT_USER", "admin")
-RDT_PASS = os.environ.get("RDT_PASS", "")
-PROWLARR_URL = os.environ.get("PROWLARR_URL", "").rstrip("/")
-PROWLARR_API_KEY = os.environ.get("PROWLARR_API_KEY", "")
-JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
-JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
-ROMM_URL = os.environ.get("ROMM_URL", "").rstrip("/")
-ROMM_API_TOKEN = os.environ.get("ROMM_API_TOKEN", "")
-ROMM_USER = os.environ.get("ROMM_USER", "")
-ROMM_PASS = os.environ.get("ROMM_PASS", "")
-GAMEVAULT_URL = os.environ.get("GAMEVAULT_URL", "").rstrip("/")
-GAMEVAULT_API_KEY = os.environ.get("GAMEVAULT_API_KEY", "")
+
+def _redact(text: str) -> str:
+    """Mask credentials in text bound for logs or tool output.
+
+    Masks `apikey=...`-style query/form values, plus any configured secret
+    value wherever it appears (headers echoed in an error body, etc.).
+    """
+    text = _SECRET_PARAM.sub(lambda m: f"{m.group(1)}=***", text)
+    for name in _SECRET_SETTINGS:
+        value = globals().get(name) or ""
+        if len(value) >= _MIN_LITERAL_SECRET and value in text:
+            text = text.replace(value, "***")
+    return text
+
+
+_base_record_factory = logging.getLogRecordFactory()
+
+
+def _redacting_record_factory(*args, **kwargs):
+    # Redact at record creation so every handler (ours, uvicorn's, test
+    # capture) sees the masked message.
+    record = _base_record_factory(*args, **kwargs)
+    try:
+        message = record.getMessage()
+    except Exception:  # malformed format args: leave the record alone
+        return record
+    masked = _redact(message)
+    if masked != message:
+        record.msg, record.args = masked, ()
+    return record
+
+
+logging.setLogRecordFactory(_redacting_record_factory)
+
+SONARR_URL = SETTINGS["SONARR_URL"].rstrip("/")
+SONARR_API_KEY = SETTINGS["SONARR_API_KEY"]
+RADARR_URL = SETTINGS["RADARR_URL"].rstrip("/")
+RADARR_API_KEY = SETTINGS["RADARR_API_KEY"]
+LIDARR_URL = SETTINGS["LIDARR_URL"].rstrip("/")
+LIDARR_API_KEY = SETTINGS["LIDARR_API_KEY"]
+QBT_URL = SETTINGS["QBT_URL"].rstrip("/")
+QBT_USER = SETTINGS["QBT_USER"]
+QBT_PASS = SETTINGS["QBT_PASS"]
+RDT_URL = SETTINGS["RDT_URL"].rstrip("/")
+RDT_USER = SETTINGS["RDT_USER"]
+RDT_PASS = SETTINGS["RDT_PASS"]
+PROWLARR_URL = SETTINGS["PROWLARR_URL"].rstrip("/")
+PROWLARR_API_KEY = SETTINGS["PROWLARR_API_KEY"]
+JELLYFIN_URL = SETTINGS["JELLYFIN_URL"].rstrip("/")
+JELLYFIN_API_KEY = SETTINGS["JELLYFIN_API_KEY"]
+ROMM_URL = SETTINGS["ROMM_URL"].rstrip("/")
+ROMM_API_TOKEN = SETTINGS["ROMM_API_TOKEN"]
+ROMM_USER = SETTINGS["ROMM_USER"]
+ROMM_PASS = SETTINGS["ROMM_PASS"]
+GAMEVAULT_URL = SETTINGS["GAMEVAULT_URL"].rstrip("/")
+GAMEVAULT_API_KEY = SETTINGS["GAMEVAULT_API_KEY"]
 MCP_ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get(
-        "MCP_ALLOWED_HOSTS", "localhost:*,127.0.0.1:*,[::1]:*"
-    ).split(",")
-    if host.strip()
+    host.strip() for host in SETTINGS["MCP_ALLOWED_HOSTS"].split(",") if host.strip()
 ]
-SAB_URL = os.environ.get("SAB_URL", "").rstrip("/")
-SAB_API_KEY = os.environ.get("SAB_API_KEY", "")
-BOOKSHELF_URL = os.environ.get("BOOKSHELF_URL", "").rstrip("/")
-BOOKSHELF_API_KEY = os.environ.get("BOOKSHELF_API_KEY", "")
-ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
+SAB_URL = SETTINGS["SAB_URL"].rstrip("/")
+SAB_API_KEY = SETTINGS["SAB_API_KEY"]
+BOOKSHELF_URL = SETTINGS["BOOKSHELF_URL"].rstrip("/")
+BOOKSHELF_API_KEY = SETTINGS["BOOKSHELF_API_KEY"]
+SEERR_URL = SETTINGS["SEERR_URL"].rstrip("/")
+SEERR_API_KEY = SETTINGS["SEERR_API_KEY"]
+ENABLED_SERVICES = SETTINGS["ENABLED_SERVICES"]
+INSTRUCTION_PRESETS = SETTINGS["INSTRUCTION_PRESETS"]
+EXTRA_INSTRUCTIONS = SETTINGS["EXTRA_INSTRUCTIONS"]
+ALLOW_DESTRUCTIVE = SETTINGS["ALLOW_DESTRUCTIVE"]
 
 # ── Agentic Resource Discovery (ARD) ──
 # Publish this MCP server to ARD registries/crawlers. See ard.py and README.
@@ -87,40 +153,32 @@ ENABLED_SERVICES = os.environ.get("ENABLED_SERVICES", "auto")
 #                 set this for a domain whose root you control and where you host
 #                 a DID document — it is otherwise left off so we never advertise
 #                 an identity that can't resolve.
-ARD_ENABLED = os.environ.get("ARD_ENABLED", "auto").strip().lower()
-ARD_PUBLIC_URL = os.environ.get("ARD_PUBLIC_URL", "").strip()
-ARD_DOMAIN = os.environ.get("ARD_DOMAIN", "").strip()
-ARD_HOST_NAME = os.environ.get("ARD_HOST_NAME", "").strip() or ard.DEFAULT_HOST_NAME
-ARD_EMBED_CARD = os.environ.get("ARD_EMBED_CARD", "auto").strip().lower()
-ARD_DID_WEB = os.environ.get("ARD_DID_WEB", "").strip()
+ARD_ENABLED = SETTINGS["ARD_ENABLED"].strip().lower()
+ARD_PUBLIC_URL = SETTINGS["ARD_PUBLIC_URL"].strip()
+ARD_DOMAIN = SETTINGS["ARD_DOMAIN"].strip()
+ARD_HOST_NAME = SETTINGS["ARD_HOST_NAME"].strip() or ard.DEFAULT_HOST_NAME
+ARD_EMBED_CARD = SETTINGS["ARD_EMBED_CARD"].strip().lower()
+ARD_DID_WEB = SETTINGS["ARD_DID_WEB"].strip()
 
+# key -> (display name, base URL, tool prefix); order and shape kept for callers.
 SERVICE_CONFIG = {
-    "sonarr": ("Sonarr", SONARR_URL, "sonarr_"),
-    "radarr": ("Radarr", RADARR_URL, "radarr_"),
-    "lidarr": ("Lidarr", LIDARR_URL, "lidarr_"),
-    "prowlarr": ("Prowlarr", PROWLARR_URL, "prowlarr_"),
-    "qbittorrent": ("qBittorrent", QBT_URL, "qbt_"),
-    "rdtclient": ("RDTClient", RDT_URL, "rdt_"),
-    "sabnzbd": ("SABnzbd", SAB_URL, "sab_"),
-    "jellyfin": ("Jellyfin", JELLYFIN_URL, "jellyfin_"),
-    "romm": ("RomM", ROMM_URL, "romm_"),
-    "gamevault": ("GameVault", GAMEVAULT_URL, "gamevault_"),
-    "bookshelf": ("Bookshelf", BOOKSHELF_URL, "bookshelf_"),
+    key: (service.name, SETTINGS[service.url.env], service.prefix)
+    for key, service in config.SERVICES.items()
 }
-SERVICE_ALIASES = {
-    "qbt": "qbittorrent",
-    "sab": "sabnzbd",
-    "rdt": "rdtclient",
-    "game-vault": "gamevault",
-}
+SERVICE_ALIASES = dict(config.SERVICE_ALIASES)
 
-mcp = FastMCP(
-    "arrstack",
-    instructions=(
-        "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
-        "Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), "
-        "RomM (ROM library), and GameVault (PC game library). "
-        "Use these tools to search, add, and manage media and game libraries.\n\n"
+_BASE_INSTRUCTIONS = (
+    "Homelab media stack tools for Sonarr (TV), Radarr (Movies), Lidarr (Music), "
+    "Prowlarr (Indexers), qBittorrent, RDTClient and SABnzbd (Downloads), Jellyfin (Streaming), "
+    "Seerr (Media requests), Bookshelf (Books), RomM (ROM library), and GameVault (PC game library). "
+    "Use these tools to search, add, and manage media and game libraries."
+)
+
+# Opt-in workflow guidance appended to the server instructions with
+# INSTRUCTION_PRESETS=<name>[,<name>]. Kept out of the default so every client
+# isn't told about one deployment's trackers.
+INSTRUCTION_PRESET_TEXT = {
+    "hun-ncore": (
         "## Hungarian (HuN) / nCore workflow\n"
         "nCore is a Hungarian private tracker with dual-audio (HuN) releases. "
         "When the user wants Hungarian releases:\n"
@@ -137,6 +195,56 @@ mcp = FastMCP(
         "4. If existing files need replacing (e.g. English → HuN), delete the movie file "
         "with radarr_delete_movie_file / sonarr_delete_episode_file first, then search.\n"
     ),
+}
+
+# Tools that delete downloads or library files. ALLOW_DESTRUCTIVE=false hides
+# them from the catalog for deployments that want an additive-only agent.
+DESTRUCTIVE_TOOLS = frozenset({
+    "sonarr_delete_queue_item",
+    "sonarr_delete_episode_file",
+    "radarr_delete_queue_item",
+    "radarr_delete_movie_file",
+    "lidarr_delete_queue_item",
+    "qbt_delete",
+    "rdt_delete",
+    "sab_delete_job",
+})
+
+
+def _parse_bool(name: str, value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be true or false, got {value!r}")
+
+
+def _instruction_presets(value: str) -> list[str]:
+    """Resolve INSTRUCTION_PRESETS into known preset names."""
+    names = [item.strip().lower() for item in value.split(",") if item.strip()]
+    unknown = [name for name in names if name not in INSTRUCTION_PRESET_TEXT]
+    if unknown:
+        valid = ", ".join(INSTRUCTION_PRESET_TEXT)
+        raise ValueError(f"Unknown instruction preset '{unknown[0]}'. Valid presets: {valid}")
+    return names
+
+
+def _build_instructions(presets: str = "", extra: str = "") -> str:
+    """Server instructions: the base text, any opt-in presets, then free text."""
+    parts = [_BASE_INSTRUCTIONS]
+    try:
+        parts += [INSTRUCTION_PRESET_TEXT[name] for name in _instruction_presets(presets)]
+    except ValueError:
+        pass  # reported by main() before the server starts
+    if extra.strip():
+        parts.append(extra.strip())
+    return "\n\n".join(part.strip() for part in parts) + "\n"
+
+
+mcp = FastMCP(
+    "arrstack",
+    instructions=_build_instructions(INSTRUCTION_PRESETS, EXTRA_INSTRUCTIONS),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=MCP_ALLOWED_HOSTS,
@@ -253,118 +361,120 @@ def _http_error(service: str, error: Exception) -> str:
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         body = error.response.text[:200] if error.response is not None else ""
+        body = _redact(body)
         logger.error("%s HTTP %s: %s", service, status, body)
         return f"{service} request failed: HTTP {status} — {body}"
     logger.error("%s request error: %s", service, error)
-    return f"{service} request error: {error}"
+    return f"{service} request error: {_redact(str(error))}"
+
+
+def _decode_json(service: str, r):
+    """Decode a JSON response body.
+
+    An empty body (common for DELETE and some command endpoints) decodes to an
+    empty dict so callers treat it as success. A non-empty, non-JSON body (an
+    HTML login page, a proxy error, ...) becomes a readable error string.
+    """
+    try:
+        return r.json()
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
+        if not (r.text or "").strip():
+            return {}
+        logger.error("%s returned non-JSON response (HTTP %s)", service, r.status_code)
+        return f"{service} returned a non-JSON response (HTTP {r.status_code})."
+
+
+def _arr_request(service, base_url, api_path, api_key, path, method="GET", json=None, params=None):
+    """Shared request helper for the *arr family (X-Api-Key auth, JSON API)."""
+    logger.info("%s %s %s", service, method, path)
+    headers = {"X-Api-Key": api_key} if api_key else {}
+    try:
+        r = httpx.request(
+            method,
+            f"{base_url}{api_path}{path}",
+            headers=headers,
+            json=json,
+            params=params,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return _decode_json(service, r)
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        return _http_error(service, error)
 
 
 def _sonarr(path: str, method: str = "GET", json=None, params=None):
     if not SONARR_URL:
         return "Sonarr is not configured. Set SONARR_URL and SONARR_API_KEY."
-    logger.info("sonarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{SONARR_URL}/api/v3{path}",
-            headers={"X-Api-Key": SONARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("sonarr", error)
+    return _arr_request("sonarr", SONARR_URL, "/api/v3", SONARR_API_KEY, path, method, json, params)
 
 
 def _radarr(path: str, method: str = "GET", json=None, params=None):
     if not RADARR_URL:
         return "Radarr is not configured. Set RADARR_URL and RADARR_API_KEY."
-    logger.info("radarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{RADARR_URL}/api/v3{path}",
-            headers={"X-Api-Key": RADARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("radarr", error)
+    return _arr_request("radarr", RADARR_URL, "/api/v3", RADARR_API_KEY, path, method, json, params)
 
 
 def _lidarr(path: str, method: str = "GET", json=None, params=None):
     if not LIDARR_URL:
         return "Lidarr is not configured. Set LIDARR_URL and LIDARR_API_KEY."
-    logger.info("lidarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{LIDARR_URL}/api/v1{path}",
-            headers={"X-Api-Key": LIDARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        return _http_error("lidarr", e)
+    return _arr_request("lidarr", LIDARR_URL, "/api/v1", LIDARR_API_KEY, path, method, json, params)
 
 
-_qbt_sid = None
-_qbt_cookie_name = "SID"
+_qbt_cookies = None  # None = not logged in; {} = logged in without a cookie (auth bypass)
+
+
+def _qbt_session_cookies(login) -> dict | None:
+    """Pick the WebUI session cookie out of a /auth/login response.
+
+    qBittorrent < 5 names it "SID"; 5.x names it "QBT_SID_<port>" so several
+    instances can share a reverse-proxy domain. When the client is whitelisted
+    ("Bypass authentication for clients on localhost / in whitelisted subnets"),
+    login answers "Ok." without setting any cookie and requests work without one.
+    Returns None when the login was rejected.
+    """
+    for name, value in login.cookies.items():
+        if name == "SID" or name.startswith("QBT_SID_"):
+            return {name: value}
+    if (login.text or "").strip().lower() == "ok.":
+        return {}
+    return None
 
 
 def _qbt(path: str, method: str = "GET", data=None, params=None, files=None, _retry: bool = False):
-    global _qbt_sid, _qbt_cookie_name
+    global _qbt_cookies
     if not QBT_URL:
         return "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
     logger.info("qbt %s %s", method, path)
     try:
-        if not _qbt_sid:
+        if _qbt_cookies is None:
             login = httpx.post(
                 f"{QBT_URL}/api/v2/auth/login",
                 data={"username": QBT_USER, "password": QBT_PASS},
                 timeout=10,
             )
             login.raise_for_status()
-            _qbt_sid = login.cookies.get("SID")
-            _qbt_cookie_name = "SID"
-            if not _qbt_sid:
-                for k, v in login.cookies.items():
-                    if "SID" in k.upper():
-                        _qbt_sid = v
-                        _qbt_cookie_name = k
-                        break
-            if not _qbt_sid and (login.status_code in (200, 204) and ("Ok." in login.text or not login.text.strip())):
-                _qbt_sid = "BYPASS"
-                _qbt_cookie_name = None
-            elif not _qbt_sid:
-                return "qBittorrent login failed: no SID cookie returned."
-        cookies = {_qbt_cookie_name: _qbt_sid} if (_qbt_cookie_name and _qbt_sid != "BYPASS") else None
+            _qbt_cookies = _qbt_session_cookies(login)
+            if _qbt_cookies is None:
+                return "qBittorrent login failed: check QBT_USER and QBT_PASS."
         r = httpx.request(
             method,
             f"{QBT_URL}/api/v2{path}",
-            cookies=cookies,
+            cookies=_qbt_cookies or None,
             data=data,
             params=params,
             files=files,
             timeout=30,
         )
         if r.status_code == 403:
-            _qbt_sid = None
+            _qbt_cookies = None
             if _retry:
                 return "qBittorrent auth failure: 403 after retry."
             return _qbt(path, method, data=data, params=params, files=files, _retry=True)
         r.raise_for_status()
         try:
             return r.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("qBittorrent", error)
@@ -417,7 +527,7 @@ def _rdt(path: str, method: str = "GET", data=None, params=None, _retry: bool = 
         r.raise_for_status()
         try:
             return r.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return _http_error("rdt", e)
@@ -447,7 +557,7 @@ def _rdt_native(path: str, method: str = "GET", json=None, params=None):
         r.raise_for_status()
         try:
             return r.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             return r.text
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return _http_error("rdt-native", e)
@@ -463,7 +573,7 @@ def _jellyfin(path: str, params=None):
     try:
         r = httpx.get(f"{JELLYFIN_URL}{path}", headers=headers, params=params, timeout=30)
         r.raise_for_status()
-        return r.json()
+        return _decode_json("jellyfin", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("jellyfin", error)
 
@@ -471,20 +581,7 @@ def _jellyfin(path: str, params=None):
 def _prowlarr(path: str, method: str = "GET", json=None, params=None):
     if not PROWLARR_URL:
         return "Prowlarr is not configured. Set PROWLARR_URL and PROWLARR_API_KEY."
-    logger.info("prowlarr %s %s", method, path)
-    try:
-        r = httpx.request(
-            method,
-            f"{PROWLARR_URL}/api/v1{path}",
-            headers={"X-Api-Key": PROWLARR_API_KEY},
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return r.json()
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("prowlarr", error)
+    return _arr_request("prowlarr", PROWLARR_URL, "/api/v1", PROWLARR_API_KEY, path, method, json, params)
 
 
 def _romm(path: str, method: str = "GET", params=None, json=None, public: bool = False):
@@ -515,7 +612,7 @@ def _romm(path: str, method: str = "GET", params=None, json=None, public: bool =
             timeout=30,
         )
         r.raise_for_status()
-        return r.json()
+        return _decode_json("RomM", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("RomM", error)
 
@@ -536,7 +633,7 @@ def _gamevault(path: str, method: str = "GET", params=None):
             timeout=30,
         )
         r.raise_for_status()
-        return r.json()
+        return _decode_json("GameVault", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("GameVault", error)
 
@@ -550,6 +647,74 @@ def _format_size(size_bytes) -> str:
         if size < 1024 or unit == "TB":
             return f"{size:.1f} {unit}"
         size /= 1024
+
+
+def _apply_quality_allowlist(items, allow_lower: set, disallow_lower: set):
+    """Toggle 'allowed' on quality profile items matching the given
+    (lowercased) names. Radarr/Sonarr quality profiles nest grouped
+    qualities (e.g. "WEB 1080p" containing WEBDL-1080p + WEBRip-1080p) —
+    the group's own 'allowed' flag is what governs selection, so a match
+    on a member's name toggles the enclosing group instead of the leaf.
+    Mutates `items` in place. Returns (changed_descriptions, names_not_found).
+    """
+    changed = []
+    seen_lower = set()
+    for item in items:
+        quality = item.get("quality")
+        name = quality.get("name") if quality else item.get("name")
+        if not name:
+            continue
+        name_lower = name.lower()
+        nested = item.get("items") or []
+        member_names_lower = {
+            (m.get("quality") or {}).get("name", "").lower() for m in nested
+        }
+        matches_allow = name_lower in allow_lower or bool(member_names_lower & allow_lower)
+        matches_disallow = name_lower in disallow_lower or bool(member_names_lower & disallow_lower)
+        if matches_allow:
+            seen_lower.add(name_lower)
+            seen_lower |= member_names_lower & allow_lower
+            if not item.get("allowed"):
+                item["allowed"] = True
+                changed.append(f"+{name}")
+        if matches_disallow:
+            seen_lower.add(name_lower)
+            seen_lower |= member_names_lower & disallow_lower
+            if item.get("allowed"):
+                item["allowed"] = False
+                changed.append(f"-{name}")
+    not_found = sorted((allow_lower | disallow_lower) - seen_lower)
+    return changed, not_found
+
+
+def _tag_labels(fetch) -> dict:
+    """Map tag id -> label for an *arr service; empty if the lookup fails.
+
+    Tags are decoration in list/get output, so a failed /tag call must not
+    break the listing itself.
+    """
+    data = fetch("/tag")
+    if not isinstance(data, list):
+        return {}
+    return {t["id"]: t["label"] for t in data if isinstance(t, dict) and "id" in t}
+
+
+def _resolve_tag_ids(all_tags: list, tags_csv: str):
+    """Resolve a comma-separated list of tag labels to their IDs against
+    `all_tags` ([{id,label}, ...]). Returns (resolved_ids, unmatched_labels).
+    """
+    label_to_id = {t["label"].lower(): t["id"] for t in all_tags}
+    ids, unmatched = [], []
+    for raw in tags_csv.split(","):
+        label = raw.strip()
+        if not label:
+            continue
+        tid = label_to_id.get(label.lower())
+        if tid is None:
+            unmatched.append(label)
+        else:
+            ids.append(tid)
+    return ids, unmatched
 
 
 def _selected_services(value: str | None = None) -> set[str]:
@@ -571,15 +736,18 @@ def _selected_services(value: str | None = None) -> set[str]:
 
 
 def _configure_service_tools(value: str | None = None) -> set[str]:
-    """Remove tools belonging to services that are not selected."""
+    """Remove tools of unselected services, and destructive tools if disallowed."""
     selected = _selected_services(value)
     disabled_prefixes = [
         prefix
         for key, (_, _, prefix) in SERVICE_CONFIG.items()
         if key not in selected
     ]
+    allow_destructive = _parse_bool("ALLOW_DESTRUCTIVE", ALLOW_DESTRUCTIVE)
     for tool in list(mcp._tool_manager.list_tools()):
-        if tool.name.startswith(tuple(disabled_prefixes)):
+        if tool.name.startswith(tuple(disabled_prefixes)) or (
+            not allow_destructive and tool.name in DESTRUCTIVE_TOOLS
+        ):
             mcp.remove_tool(tool.name)
     return selected
 
@@ -596,17 +764,35 @@ def _print_service_status(value: str | None = None) -> None:
         print(f"  {key:12} {state:8} {configured:14} {count:2} tools  ({name})")
 
 
-def _run_setup() -> None:
-    """Interactively build an ENABLED_SERVICES value without touching existing files."""
-    chosen = []
-    print("Choose which service toolsets this MCP server should advertise.")
-    for key, (name, url, _) in SERVICE_CONFIG.items():
-        default = "Y" if url else "N"
-        answer = input(f"Enable {name}? [{default}] ").strip().lower()
-        if answer == "y" or (not answer and default == "Y"):
-            chosen.append(key)
-    print("\nAdd this to your .env or Docker environment:")
-    print(f"ENABLED_SERVICES={','.join(chosen)}")
+def _run_setup(output: str | None, fmt: str, use_discovery: bool, arr_config_dirs, timeout: float) -> int:
+    """--setup: interactive wizard that tests each service and writes a config file."""
+    if CONFIG_PROBLEMS:
+        print(_format_config_problems() + "\n(continuing; the wizard will ask for these values)\n")
+    found = {}
+    if use_discovery or arr_config_dirs:
+        print("Looking for services (known container names and localhost only)...")
+        found = discover.discover(arr_config_dirs, network=use_discovery)
+    # Only a TOML run defaults to the --config file; never write env text into it.
+    default = (_CONFIG.path or "arrstack.toml") if fmt == "toml" else ".env"
+    path = pathlib.Path(output or default)
+    try:
+        result = wizard.run_setup(_CONFIG, path, fmt, discovered=found, timeout=timeout)
+    except (KeyboardInterrupt, EOFError):
+        print("\nSetup cancelled; nothing written.")
+        return 1
+    return 0 if result else 1
+
+
+def _run_discover(arr_config_dirs, timeout: float) -> int:
+    """--discover: list services found on the network / in *arr config files."""
+    found = discover.discover(arr_config_dirs, network=True, timeout=timeout)
+    if not found:
+        print("No services found at the usual container names or on localhost.")
+        return 1
+    for item in found.values():
+        print(f"  • {item.describe()}")
+    print("\nRun `python server.py --setup --discover` to configure them interactively.")
+    return 0
 
 
 def _sab(mode: str, **params):
@@ -622,7 +808,7 @@ def _sab(mode: str, **params):
                 query[k] = v
         r = httpx.get(f"{SAB_URL}/sabnzbd/api", params=query, timeout=30)
         r.raise_for_status()
-        return r.json()
+        return _decode_json("sab", r)
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         return _http_error("sab", e)
 
@@ -631,26 +817,14 @@ def _bookshelf(path: str, method: str = "GET", json=None, params=None):
     """HTTP helper for Bookshelf (a Hardcover-flavored Readarr fork; Readarr v1 API)."""
     if not BOOKSHELF_URL:
         return "Bookshelf is not configured. Set BOOKSHELF_URL (and BOOKSHELF_API_KEY)."
-    logger.info("bookshelf %s %s", method, path)
-    headers = {}
-    if BOOKSHELF_API_KEY:
-        headers["X-Api-Key"] = BOOKSHELF_API_KEY
-    try:
-        r = httpx.request(
-            method,
-            f"{BOOKSHELF_URL}/api/v1{path}",
-            headers=headers,
-            json=json,
-            params=params,
-            timeout=30,
-        )
-        r.raise_for_status()
-        try:
-            return r.json()
-        except (ValueError, json.JSONDecodeError):
-            return r.text
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        return _http_error("bookshelf", e)
+    return _arr_request("bookshelf", BOOKSHELF_URL, "/api/v1", BOOKSHELF_API_KEY, path, method, json, params)
+
+
+def _seerr(path: str, method: str = "GET", json=None, params=None):
+    """HTTP helper for Seerr (Overseerr/Jellyseerr media requests; /api/v1, X-Api-Key)."""
+    if not SEERR_URL:
+        return "Seerr is not configured. Set SEERR_URL and SEERR_API_KEY."
+    return _arr_request("seerr", SEERR_URL, "/api/v1", SEERR_API_KEY, path, method, json, params)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -660,7 +834,7 @@ def _bookshelf(path: str, method: str = "GET", json=None, params=None):
 
 @mcp.tool()
 def sonarr_list_series() -> str:
-    """List all TV series in Sonarr with monitoring status, episode counts, and disk usage."""
+    """List all TV series in Sonarr with monitoring status, episode counts, disk usage, and tags."""
     data = _sonarr("/series")
     if isinstance(data, str):
         return data
@@ -670,6 +844,7 @@ def sonarr_list_series() -> str:
             profiles[p["id"]] = p["name"]
     except Exception:
         pass
+    tag_labels = _tag_labels(_sonarr)
     lines = []
     for s in sorted(data, key=lambda x: x["title"]):
         stats = s.get("statistics", {})
@@ -678,9 +853,11 @@ def sonarr_list_series() -> str:
         size_gb = stats.get("sizeOnDisk", 0) / 1e9
         icon = "✅" if s.get("monitored") else "⏸️"
         profile_name = profiles.get(s.get("qualityProfileId"), "?")
+        tags = ", ".join(tag_labels.get(tid, str(tid)) for tid in s.get("tags", []))
+        tags_str = f" [tags: {tags}]" if tags else ""
         lines.append(
             f"{icon} [id:{s['id']}] {s['title']} ({s.get('year', '?')}) — "
-            f"{have}/{total} episodes, {size_gb:.1f} GB [profile: {profile_name}]"
+            f"{have}/{total} episodes, {size_gb:.1f} GB [profile: {profile_name}]{tags_str}"
         )
     return "\n".join(lines) or "No series found."
 
@@ -702,6 +879,8 @@ def sonarr_get_series(series_id: int) -> str:
                 break
     except Exception:
         pass
+    tag_labels = _tag_labels(_sonarr)
+    tag_names = [tag_labels.get(tid, str(tid)) for tid in s.get("tags", [])]
     lines = [
         f"Title: {s['title']} ({s.get('year', '?')})",
         f"Sonarr ID: {s['id']}",
@@ -709,6 +888,7 @@ def sonarr_get_series(series_id: int) -> str:
         f"Network: {s.get('network', '?')}",
         f"Quality Profile: [{s.get('qualityProfileId', '?')}] {profile_name}",
         f"Monitored: {s.get('monitored', False)}",
+        f"Tags: {', '.join(tag_names) or 'none'}",
         f"Seasons: {stats.get('seasonCount', '?')}",
         f"Episodes: {stats.get('episodeFileCount', 0)}/{stats.get('episodeCount', 0)}",
         f"Size: {stats.get('sizeOnDisk', 0) / 1e9:.1f} GB",
@@ -788,7 +968,7 @@ def sonarr_upcoming(days: int = 7) -> str:
         series = ep.get("series", {}).get("title", "?")
         s_num = ep.get("seasonNumber", 0)
         e_num = ep.get("episodeNumber", 0)
-        air = ep.get("airDateUtc", "?")[:10]
+        air = (ep.get("airDateUtc") or "?")[:10]
         title = ep.get("title", "")
         lines.append(f"• {series} S{s_num:02d}E{e_num:02d} \"{title}\" — {air}")
     return "\n".join(lines) or "Nothing upcoming."
@@ -813,6 +993,44 @@ def sonarr_list_quality_profiles() -> str:
             f"  Allowed: {', '.join(qualities) or 'none'}"
         )
     return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def sonarr_set_quality_profile_qualities(profile_id: int, allow: str = "", disallow: str = "") -> str:
+    """Enable or disable specific qualities (or quality groups, e.g. "WEB 1080p")
+    within a Sonarr quality profile. Use sonarr_list_quality_profiles first to
+    see profile IDs and current quality/group names.
+
+    Args:
+        profile_id: Sonarr quality profile ID.
+        allow: Comma-separated quality/group names to enable (e.g. "Bluray-1080p,WEB 1080p").
+        disallow: Comma-separated quality/group names to disable.
+    """
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    allow_lower = {n.strip().lower() for n in allow.split(",") if n.strip()}
+    disallow_lower = {n.strip().lower() for n in disallow.split(",") if n.strip()}
+    if not allow_lower and not disallow_lower:
+        return "Provide at least one quality name in allow or disallow."
+    overlap = allow_lower & disallow_lower
+    if overlap:
+        return f"Quality names can't be in both allow and disallow: {', '.join(sorted(overlap))}"
+
+    profile = _sonarr(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+
+    changed, not_found = _apply_quality_allowlist(profile.get("items", []), allow_lower, disallow_lower)
+    if changed:
+        result = _sonarr(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
+        if isinstance(result, str):
+            return result
+        msg = f"✅ Updated '{profile.get('name', profile_id)}': {', '.join(changed)}"
+    else:
+        msg = "No changes made."
+    if not_found:
+        msg += f"\n⚠️ Not found in this profile: {', '.join(not_found)}"
+    return msg
 
 
 @mcp.tool()
@@ -925,17 +1143,38 @@ def sonarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
     """
     if queue_id <= 0:
         return "Invalid queue_id."
-    try:
-        r = httpx.delete(
-            f"{SONARR_URL}/api/v3/queue/{queue_id}",
-            headers={"X-Api-Key": SONARR_API_KEY},
-            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
-            timeout=30,
+    result = _sonarr(
+        f"/queue/{queue_id}",
+        method="DELETE",
+        params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to remove queue item: {result}"
+    return "✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
+
+
+@mcp.tool()
+def sonarr_list_episode_files(series_id: int, season: int = -1) -> str:
+    """List downloaded episode files for a series, with the file IDs used by sonarr_delete_episode_file.
+
+    Args:
+        series_id: Sonarr series ID (use sonarr_list_series to find it).
+        season: Only show this season number (-1 for all seasons).
+    """
+    if series_id <= 0:
+        return "Invalid series_id."
+    data = _sonarr("/episodefile", params={"seriesId": series_id})
+    if isinstance(data, str):
+        return data
+    files = [f for f in data if season < 0 or f.get("seasonNumber") == season]
+    lines = []
+    for f in sorted(files, key=lambda x: (x.get("seasonNumber", 0), x.get("relativePath") or "")):
+        quality = ((f.get("quality") or {}).get("quality") or {}).get("name", "?")
+        lines.append(
+            f"• [fileId: {f.get('id', '?')}] S{f.get('seasonNumber', 0):02d} "
+            f"{f.get('relativePath', '?')} — {quality}, {_format_size(f.get('size'))}"
         )
-        r.raise_for_status()
-        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("sonarr", error)
+    return "\n".join(lines) or "No episode files found."
 
 
 @mcp.tool()
@@ -944,20 +1183,14 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
     This allows Sonarr to re-search and download a new version.
 
     Args:
-        episode_file_id: Episode file ID (use sonarr_get_series to find file IDs).
+        episode_file_id: Episode file ID (use sonarr_list_episode_files to find it).
     """
     if episode_file_id <= 0:
         return "Invalid episode_file_id."
-    try:
-        r = httpx.delete(
-            f"{SONARR_URL}/api/v3/episodefile/{episode_file_id}",
-            headers={"X-Api-Key": SONARR_API_KEY},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("sonarr", error)
+    result = _sonarr(f"/episodefile/{episode_file_id}", method="DELETE")
+    if isinstance(result, str):
+        return f"❌ Failed to delete episode file: {result}"
+    return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
 
 
 @mcp.tool()
@@ -1000,13 +1233,97 @@ def sonarr_update_series(series_id: int, quality_profile_id: int = -1, monitored
         changes.append(f"monitored → {bool(monitored)}")
     if not changes:
         return "No changes specified."
-    try:
-        result = _sonarr(f"/series/{series_id}", method="PUT", json=series)
-        if isinstance(result, dict):
-            return f"✅ Updated '{result['title']}': {', '.join(changes)}"
-        return str(result)
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    result = _sonarr(f"/series/{series_id}", method="PUT", json=series)
+    if isinstance(result, dict):
+        return f"✅ Updated '{result.get('title', '?')}': {', '.join(changes)}"
+    return f"❌ Failed: {result}"
+
+
+@mcp.tool()
+def sonarr_list_tags() -> str:
+    """List all tags defined in Sonarr, with how many series each is applied to.
+    Sonarr/Seerr can auto-tag series by requesting user — useful for scoping
+    actions to what a specific person requested."""
+    data = _sonarr("/tag/detail")
+    if isinstance(data, str):
+        return data
+    lines = [f"• [{t['id']}] {t['label']} — {len(t.get('seriesIds', []))} series" for t in data]
+    return "\n".join(lines) or "No tags found."
+
+
+@mcp.tool()
+def sonarr_list_series_by_tag(tag: str) -> str:
+    """List series in Sonarr that have a specific tag (e.g. a requester tag
+    like "2 - bryan"). Use sonarr_list_tags to see available tag labels.
+
+    Args:
+        tag: Exact tag label to filter by (case-insensitive).
+    """
+    all_tags = _sonarr("/tag")
+    if isinstance(all_tags, str):
+        return all_tags
+    ids, unmatched = _resolve_tag_ids(all_tags, tag)
+    if unmatched:
+        valid = ", ".join(t["label"] for t in all_tags)
+        return f"Tag not found: {unmatched[0]}. Valid tags: {valid}"
+    tag_id = ids[0]
+    data = _sonarr("/series")
+    if isinstance(data, str):
+        return data
+    matches = [s for s in data if tag_id in s.get("tags", [])]
+    lines = [
+        f"[id:{s['id']}] {s['title']} ({s.get('year', '?')})" for s in sorted(matches, key=lambda x: x["title"])
+    ]
+    return "\n".join(lines) or f"No series tagged '{tag}'."
+
+
+@mcp.tool()
+def sonarr_set_series_tags(series_id: int, tags: str, mode: str = "add") -> str:
+    """Add, remove, or set tags on a series in Sonarr. Tags that don't exist
+    yet are created automatically (matching add/set mode only).
+
+    Args:
+        series_id: Sonarr series ID (use sonarr_list_series or sonarr_get_series to find it).
+        tags: Comma-separated tag labels (e.g. "2 - bryan,rewatch").
+        mode: "add" to add to existing tags, "remove" to remove named tags,
+            "set" to replace all tags with exactly these (default: "add").
+    """
+    if series_id <= 0:
+        return "Invalid series_id."
+    if mode not in ("add", "remove", "set"):
+        return 'Invalid mode. Use "add", "remove", or "set".'
+    tag_names = [n.strip() for n in tags.split(",") if n.strip()]
+    if not tag_names:
+        return "Provide at least one tag name."
+
+    series = _sonarr(f"/series/{series_id}")
+    if isinstance(series, str):
+        return series
+    all_tags = _sonarr("/tag")
+    if isinstance(all_tags, str):
+        return all_tags
+
+    ids, unmatched = _resolve_tag_ids(all_tags, tags)
+    if mode == "remove" and unmatched:
+        return f"Tag(s) not found: {', '.join(unmatched)}"
+    for label in unmatched:  # add/set: create any tag that doesn't exist yet
+        created = _sonarr("/tag", method="POST", json={"label": label})
+        if isinstance(created, str):
+            return created
+        ids.append(created["id"])
+
+    current = set(series.get("tags", []))
+    if mode == "add":
+        series["tags"] = sorted(current | set(ids))
+    elif mode == "remove":
+        series["tags"] = sorted(current - set(ids))
+    else:  # set
+        series["tags"] = sorted(set(ids))
+
+    result = _sonarr(f"/series/{series_id}", method="PUT", json=series)
+    if isinstance(result, str):
+        return result
+    return f"✅ Tags on '{result.get('title') or series.get('title', series_id)}' ({mode}: {', '.join(tag_names)}): now {series['tags']}"
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1016,7 +1333,7 @@ def sonarr_update_series(series_id: int, quality_profile_id: int = -1, monitored
 
 @mcp.tool()
 def radarr_list_movies() -> str:
-    """List all movies in Radarr with download status and disk usage."""
+    """List all movies in Radarr with download status, disk usage, and tags."""
     data = _radarr("/movie")
     if isinstance(data, str):
         return data
@@ -1026,15 +1343,18 @@ def radarr_list_movies() -> str:
             profiles[p["id"]] = p["name"]
     except Exception:
         pass
+    tag_labels = _tag_labels(_radarr)
     lines = []
     for m in sorted(data, key=lambda x: x["title"]):
         has_file = "✅" if m.get("hasFile") else "❌"
         monitored = "👁" if m.get("monitored") else "⏸️"
         size_gb = m.get("sizeOnDisk", 0) / 1e9
         profile_name = profiles.get(m.get("qualityProfileId"), "?")
+        tags = ", ".join(tag_labels.get(tid, str(tid)) for tid in m.get("tags", []))
+        tags_str = f" [tags: {tags}]" if tags else ""
         lines.append(
             f"{has_file}{monitored} [id:{m['id']}] {m['title']} ({m.get('year', '?')}) — "
-            f"{size_gb:.1f} GB [profile: {profile_name}]"
+            f"{size_gb:.1f} GB [profile: {profile_name}]{tags_str}"
         )
     return "\n".join(lines) or "No movies found."
 
@@ -1055,6 +1375,8 @@ def radarr_get_movie(movie_id: int) -> str:
                 break
     except Exception:
         pass
+    tag_labels = _tag_labels(_radarr)
+    tag_names = [tag_labels.get(tid, str(tid)) for tid in m.get("tags", [])]
     lines = [
         f"Title: {m['title']} ({m.get('year', '?')})",
         f"Radarr ID: {m['id']}",
@@ -1063,6 +1385,7 @@ def radarr_get_movie(movie_id: int) -> str:
         f"Quality Profile: [{m.get('qualityProfileId', '?')}] {profile_name}",
         f"Has File: {m.get('hasFile', False)}",
         f"Monitored: {m.get('monitored', False)}",
+        f"Tags: {', '.join(tag_names) or 'none'}",
         f"Size: {m.get('sizeOnDisk', 0) / 1e9:.1f} GB",
         f"Path: {m.get('path', '?')}",
         f"TMDB: {m.get('tmdbId', '?')} | IMDB: {m.get('imdbId', '?')}",
@@ -1136,6 +1459,44 @@ def radarr_list_quality_profiles() -> str:
             f"  Allowed: {', '.join(qualities) or 'none'}"
         )
     return "\n".join(lines) or "No quality profiles found."
+
+
+@mcp.tool()
+def radarr_set_quality_profile_qualities(profile_id: int, allow: str = "", disallow: str = "") -> str:
+    """Enable or disable specific qualities (or quality groups, e.g. "WEB 1080p")
+    within a Radarr quality profile. Use radarr_list_quality_profiles first to
+    see profile IDs and current quality/group names.
+
+    Args:
+        profile_id: Radarr quality profile ID.
+        allow: Comma-separated quality/group names to enable (e.g. "Bluray-1080p,WEB 1080p").
+        disallow: Comma-separated quality/group names to disable.
+    """
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    allow_lower = {n.strip().lower() for n in allow.split(",") if n.strip()}
+    disallow_lower = {n.strip().lower() for n in disallow.split(",") if n.strip()}
+    if not allow_lower and not disallow_lower:
+        return "Provide at least one quality name in allow or disallow."
+    overlap = allow_lower & disallow_lower
+    if overlap:
+        return f"Quality names can't be in both allow and disallow: {', '.join(sorted(overlap))}"
+
+    profile = _radarr(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+
+    changed, not_found = _apply_quality_allowlist(profile.get("items", []), allow_lower, disallow_lower)
+    if changed:
+        result = _radarr(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
+        if isinstance(result, str):
+            return result
+        msg = f"✅ Updated '{profile.get('name', profile_id)}': {', '.join(changed)}"
+    else:
+        msg = "No changes made."
+    if not_found:
+        msg += f"\n⚠️ Not found in this profile: {', '.join(not_found)}"
+    return msg
 
 
 @mcp.tool()
@@ -1248,17 +1609,14 @@ def radarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
     """
     if queue_id <= 0:
         return "Invalid queue_id."
-    try:
-        r = httpx.delete(
-            f"{RADARR_URL}/api/v3/queue/{queue_id}",
-            headers={"X-Api-Key": RADARR_API_KEY},
-            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("radarr", error)
+    result = _radarr(
+        f"/queue/{queue_id}",
+        method="DELETE",
+        params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to remove queue item: {result}"
+    return "✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
 
 
 @mcp.tool()
@@ -1278,16 +1636,10 @@ def radarr_delete_movie_file(movie_id: int) -> str:
     if not movie_file:
         return f"Movie '{movie.get('title', '?')}' has no file to delete."
     fid = movie_file.get("id")
-    try:
-        r = httpx.delete(
-            f"{RADARR_URL}/api/v3/moviefile/{fid}",
-            headers={"X-Api-Key": RADARR_API_KEY},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Deleted file for '{movie['title']}' (file id: {fid}). Movie is now marked as missing."
-    except (httpx.HTTPStatusError, httpx.RequestError) as error:
-        return _http_error("radarr", error)
+    result = _radarr(f"/moviefile/{fid}", method="DELETE")
+    if isinstance(result, str):
+        return f"❌ Failed to delete movie file: {result}"
+    return f"✅ Deleted file for '{movie.get('title', '?')}' (file id: {fid}). Movie is now marked as missing."
 
 
 @mcp.tool()
@@ -1313,13 +1665,97 @@ def radarr_update_movie(movie_id: int, quality_profile_id: int = -1, monitored: 
         changes.append(f"monitored → {bool(monitored)}")
     if not changes:
         return "No changes specified."
-    try:
-        result = _radarr(f"/movie/{movie_id}", method="PUT", json=movie)
-        if isinstance(result, dict):
-            return f"✅ Updated '{result['title']}': {', '.join(changes)}"
-        return str(result)
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    result = _radarr(f"/movie/{movie_id}", method="PUT", json=movie)
+    if isinstance(result, dict):
+        return f"✅ Updated '{result.get('title', '?')}': {', '.join(changes)}"
+    return f"❌ Failed: {result}"
+
+
+@mcp.tool()
+def radarr_list_tags() -> str:
+    """List all tags defined in Radarr, with how many movies each is applied to.
+    Radarr/Seerr can auto-tag movies by requesting user — useful for scoping
+    actions to what a specific person requested."""
+    data = _radarr("/tag/detail")
+    if isinstance(data, str):
+        return data
+    lines = [f"• [{t['id']}] {t['label']} — {len(t.get('movieIds', []))} movies" for t in data]
+    return "\n".join(lines) or "No tags found."
+
+
+@mcp.tool()
+def radarr_list_movies_by_tag(tag: str) -> str:
+    """List movies in Radarr that have a specific tag (e.g. a requester tag
+    like "2 - bryan"). Use radarr_list_tags to see available tag labels.
+
+    Args:
+        tag: Exact tag label to filter by (case-insensitive).
+    """
+    all_tags = _radarr("/tag")
+    if isinstance(all_tags, str):
+        return all_tags
+    ids, unmatched = _resolve_tag_ids(all_tags, tag)
+    if unmatched:
+        valid = ", ".join(t["label"] for t in all_tags)
+        return f"Tag not found: {unmatched[0]}. Valid tags: {valid}"
+    tag_id = ids[0]
+    data = _radarr("/movie")
+    if isinstance(data, str):
+        return data
+    matches = [m for m in data if tag_id in m.get("tags", [])]
+    lines = [
+        f"[id:{m['id']}] {m['title']} ({m.get('year', '?')})" for m in sorted(matches, key=lambda x: x["title"])
+    ]
+    return "\n".join(lines) or f"No movies tagged '{tag}'."
+
+
+@mcp.tool()
+def radarr_set_movie_tags(movie_id: int, tags: str, mode: str = "add") -> str:
+    """Add, remove, or set tags on a movie in Radarr. Tags that don't exist
+    yet are created automatically (matching add/set mode only).
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+        tags: Comma-separated tag labels (e.g. "2 - bryan,rewatch").
+        mode: "add" to add to existing tags, "remove" to remove named tags,
+            "set" to replace all tags with exactly these (default: "add").
+    """
+    if movie_id <= 0:
+        return "Invalid movie_id."
+    if mode not in ("add", "remove", "set"):
+        return 'Invalid mode. Use "add", "remove", or "set".'
+    tag_names = [n.strip() for n in tags.split(",") if n.strip()]
+    if not tag_names:
+        return "Provide at least one tag name."
+
+    movie = _radarr(f"/movie/{movie_id}")
+    if isinstance(movie, str):
+        return movie
+    all_tags = _radarr("/tag")
+    if isinstance(all_tags, str):
+        return all_tags
+
+    ids, unmatched = _resolve_tag_ids(all_tags, tags)
+    if mode == "remove" and unmatched:
+        return f"Tag(s) not found: {', '.join(unmatched)}"
+    for label in unmatched:  # add/set: create any tag that doesn't exist yet
+        created = _radarr("/tag", method="POST", json={"label": label})
+        if isinstance(created, str):
+            return created
+        ids.append(created["id"])
+
+    current = set(movie.get("tags", []))
+    if mode == "add":
+        movie["tags"] = sorted(current | set(ids))
+    elif mode == "remove":
+        movie["tags"] = sorted(current - set(ids))
+    else:  # set
+        movie["tags"] = sorted(set(ids))
+
+    result = _radarr(f"/movie/{movie_id}", method="PUT", json=movie)
+    if isinstance(result, str):
+        return result
+    return f"✅ Tags on '{result.get('title') or movie.get('title', movie_id)}' ({mode}: {', '.join(tag_names)}): now {movie['tags']}"
 
 
 @mcp.tool()
@@ -1327,17 +1763,20 @@ def radarr_search_missing(movie_ids: str = "") -> str:
     """Trigger a search for missing movies in Radarr.
 
     Args:
-        movie_ids: Comma-separated Radarr movie IDs to search. Leave empty to search ALL missing movies.
+        movie_ids: Comma-separated Radarr movie IDs to search. Leave empty to search all
+            monitored movies that are missing (Radarr's own "Search All Missing").
     """
-    if movie_ids:
-        ids = [int(x.strip()) for x in movie_ids.split(",")]
-    else:
-        movies = _radarr("/movie")
-        if isinstance(movies, str):
-            return movies
-        ids = [m["id"] for m in movies if not m.get("hasFile")]
-        if not ids:
-            return "All movies have files — nothing to search."
+    if not movie_ids.strip():
+        result = _radarr("/command", method="POST", json={"name": "MissingMoviesSearch"})
+        if isinstance(result, dict):
+            return "🔍 Search triggered for all monitored missing movies."
+        return str(result)
+    try:
+        ids = [int(x) for x in (part.strip() for part in movie_ids.split(",")) if x]
+    except ValueError:
+        return "Invalid movie_ids: use comma-separated numeric Radarr IDs, e.g. \"12,34\"."
+    if not ids or any(i <= 0 for i in ids):
+        return "Invalid movie_ids: use comma-separated numeric Radarr IDs, e.g. \"12,34\"."
     result = _radarr("/command", method="POST", json={"name": "MoviesSearch", "movieIds": ids})
     if isinstance(result, dict):
         return f"🔍 Search triggered for {len(ids)} movie(s)."
@@ -1535,17 +1974,14 @@ def lidarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
     """
     if queue_id <= 0:
         return "Invalid queue_id."
-    try:
-        r = httpx.delete(
-            f"{LIDARR_URL}/api/v1/queue/{queue_id}",
-            headers={"X-Api-Key": LIDARR_API_KEY},
-            params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
-            timeout=30,
-        )
-        r.raise_for_status()
-        return f"✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
-    except httpx.HTTPStatusError as e:
-        return f"❌ Failed: {e.response.status_code} — {e.response.text[:200]}"
+    result = _lidarr(
+        f"/queue/{queue_id}",
+        method="DELETE",
+        params={"removeFromClient": "true", "blocklist": str(blocklist).lower()},
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to remove queue item: {result}"
+    return "✅ Removed from queue." + (" (blocklisted)" if blocklist else "")
 
 
 @mcp.tool()
@@ -1587,8 +2023,11 @@ def prowlarr_test_indexer(indexer_id: int) -> str:
     """
     if indexer_id <= 0:
         return "Invalid indexer_id."
-    result = _prowlarr(f"/indexer/{indexer_id}/test", method="POST")
-    if isinstance(result, str) and result.startswith("prowlarr request"):
+    indexer = _prowlarr(f"/indexer/{indexer_id}")
+    if isinstance(indexer, str):
+        return f"❌ Indexer test failed: {indexer}"
+    result = _prowlarr("/indexer/test", method="POST", json=indexer, params={"forceTest": "true"})
+    if isinstance(result, str):
         return f"❌ Indexer test failed: {result}"
     return "✅ Indexer test passed."
 
@@ -1603,8 +2042,8 @@ def prowlarr_test_all_indexers() -> str:
     for idx in data:
         if not idx.get("enable"):
             continue
-        result = _prowlarr(f"/indexer/{idx['id']}/test", method="POST")
-        if isinstance(result, str) and result.startswith("prowlarr request"):
+        result = _prowlarr("/indexer/test", method="POST", json=idx, params={"forceTest": "true"})
+        if isinstance(result, str):
             results.append(f"❌ {idx['name']} — {result}")
         else:
             results.append(f"✅ {idx['name']} — OK")
@@ -1754,10 +2193,11 @@ def _qbt_add_result(result):
         # _qbt returns plain-text error messages (not configured, HTTP errors, …).
         return False, text
     if isinstance(result, dict):
+        # Newer WebUI API versions answer /torrents/add with JSON counts.
         if result.get("success_count", 0) > 0 or result.get("added_torrent_ids"):
             return True, ""
         if result.get("failure_count", 0) > 0:
-            return False, f"qBittorrent failed to add torrent: {result}"
+            return False, "qBittorrent rejected it (duplicate or invalid torrent)."
     return False, str(result)
 
 
@@ -1791,8 +2231,7 @@ def _looks_like_torrent(content):
     """
     if not content or content[:1] != b"d":
         return False
-    head = content[:65536]
-    return b"4:info" in head or b"announce" in head
+    return b"4:info" in content
 
 
 def _decode_b64_torrent(text):
@@ -1925,7 +2364,10 @@ def _qbt_resolve_source(source):
         return "magnet", src
     if low.startswith(("http://", "https://")):
         return _qbt_fetch_torrent(src)
-    if os.path.isfile(src):
+    # Only files named *.torrent are read from the server's disk. Anything else
+    # falls through to the generic "unrecognized" error, so this tool can't be
+    # used to read arbitrary files or to probe which paths exist on the host.
+    if low.endswith(".torrent") and os.path.isfile(src):
         try:
             with open(src, "rb") as fh:
                 content = fh.read()
@@ -2076,15 +2518,44 @@ def qbt_add_torrent_file(source: str, category: str = "", save_path: str = "", p
     return _qbt_add_source(source, category=category, save_path=save_path, paused=paused)
 
 
+def _action_ok(result) -> bool:
+    """True when a qBittorrent-style action call succeeded.
+
+    Action endpoints answer with an empty body or "Ok." on success; the
+    request helpers return a non-empty message string on any failure
+    (not configured, login/auth failure, HTTP error, ...).
+    """
+    if isinstance(result, str):
+        text = result.strip()
+        return text == "" or text.lower() == "ok."
+    return True
+
+
+def _qbt_action(path: str, legacy_path: str, data: dict):
+    """POST a qBittorrent action, falling back to the pre-5.0 endpoint name.
+
+    qBittorrent 5.x renamed /torrents/pause|resume to /torrents/stop|start;
+    4.x answers the new names with 404.
+    """
+    result = _qbt(path, method="POST", data=data)
+    if not _action_ok(result) and isinstance(result, str) and "HTTP 404" in result:
+        result = _qbt(legacy_path, method="POST", data=data)
+    return result
+
+
 @mcp.tool()
 def qbt_pause(torrent_hash: str) -> str:
     """Pause a torrent. Use 'all' to pause everything.
 
     Args:
-        torrent_hash: Hash of the torrent, or "all" to pause all.
+        torrent_hash: Hash of the torrent, "hash1|hash2", or "all" to pause all.
     """
-    _qbt("/torrents/stop", method="POST", data={"hashes": torrent_hash})
-    return "⏸️ Paused."
+    if not torrent_hash.strip():
+        return "❌ No torrent hash given."
+    result = _qbt_action("/torrents/stop", "/torrents/pause", {"hashes": torrent_hash.strip()})
+    if _action_ok(result):
+        return "⏸️ Paused."
+    return f"❌ Pause failed: {result}"
 
 
 @mcp.tool()
@@ -2092,10 +2563,14 @@ def qbt_resume(torrent_hash: str) -> str:
     """Resume a torrent. Use 'all' to resume everything.
 
     Args:
-        torrent_hash: Hash of the torrent, or "all" to resume all.
+        torrent_hash: Hash of the torrent, "hash1|hash2", or "all" to resume all.
     """
-    _qbt("/torrents/start", method="POST", data={"hashes": torrent_hash})
-    return "▶️ Resumed."
+    if not torrent_hash.strip():
+        return "❌ No torrent hash given."
+    result = _qbt_action("/torrents/start", "/torrents/resume", {"hashes": torrent_hash.strip()})
+    if _action_ok(result):
+        return "▶️ Resumed."
+    return f"❌ Resume failed: {result}"
 
 
 @mcp.tool()
@@ -2103,14 +2578,18 @@ def qbt_delete(torrent_hash: str, delete_files: bool = False) -> str:
     """Delete a torrent from qBittorrent.
 
     Args:
-        torrent_hash: Hash of the torrent to delete.
+        torrent_hash: Hash of the torrent to delete (or "hash1|hash2").
         delete_files: If True, also delete downloaded files from disk.
     """
-    _qbt(
+    if not torrent_hash.strip():
+        return "❌ No torrent hash given."
+    result = _qbt(
         "/torrents/delete",
         method="POST",
-        data={"hashes": torrent_hash, "deleteFiles": str(delete_files).lower()},
+        data={"hashes": torrent_hash.strip(), "deleteFiles": str(delete_files).lower()},
     )
+    if not _action_ok(result):
+        return f"❌ Delete failed: {result}"
     return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
 
 
@@ -2202,10 +2681,27 @@ def rdt_add_magnet(magnet: str, category: str = "") -> str:
         magnet: The magnet URI to add.
         category: Optional category to assign (e.g. "tv", "movies").
     """
-    result = _rdt("/torrents/add", method="POST", data={"urls": magnet, "category": category})
-    if isinstance(result, str) and result.strip() == "Ok.":
+    magnet = magnet.strip()
+    if not magnet.lower().startswith("magnet:"):
+        return "❌ That doesn't look like a magnet link (it must start with 'magnet:')."
+    data = {"urls": magnet}
+    if category:
+        data["category"] = category
+    result = _rdt("/torrents/add", method="POST", data=data)
+    if _action_ok(result):
         return "✅ Torrent added to RDTClient."
-    return f"Result: {result}"
+    return f"❌ Failed to add to RDTClient: {result}"
+
+
+def _rdt_simple_action(path: str, torrent_hashes: str, success: str, verb: str, extra=None) -> str:
+    if not torrent_hashes.strip():
+        return "❌ No torrent hash given."
+    data = {"hashes": torrent_hashes.strip()}
+    data.update(extra or {})
+    result = _rdt(path, method="POST", data=data)
+    if _action_ok(result):
+        return success
+    return f"❌ {verb} failed: {result}"
 
 
 @mcp.tool()
@@ -2215,8 +2711,7 @@ def rdt_pause(torrent_hashes: str) -> str:
     Args:
         torrent_hashes: Hash, "hash1|hash2", or "all".
     """
-    _rdt("/torrents/pause", method="POST", data={"hashes": torrent_hashes})
-    return "⏸️ Paused."
+    return _rdt_simple_action("/torrents/pause", torrent_hashes, "⏸️ Paused.", "Pause")
 
 
 @mcp.tool()
@@ -2226,8 +2721,7 @@ def rdt_resume(torrent_hashes: str) -> str:
     Args:
         torrent_hashes: Hash, "hash1|hash2", or "all".
     """
-    _rdt("/torrents/resume", method="POST", data={"hashes": torrent_hashes})
-    return "▶️ Resumed."
+    return _rdt_simple_action("/torrents/resume", torrent_hashes, "▶️ Resumed.", "Resume")
 
 
 @mcp.tool()
@@ -2238,12 +2732,14 @@ def rdt_delete(torrent_hashes: str, delete_files: bool = False) -> str:
         torrent_hashes: Hash, "hash1|hash2", or "all".
         delete_files: If True, also delete downloaded files from disk.
     """
-    _rdt(
+    success = "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
+    return _rdt_simple_action(
         "/torrents/delete",
-        method="POST",
-        data={"hashes": torrent_hashes, "deleteFiles": str(delete_files).lower()},
+        torrent_hashes,
+        success,
+        "Delete",
+        {"deleteFiles": str(delete_files).lower()},
     )
-    return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
 
 
 @mcp.tool()
@@ -2358,6 +2854,129 @@ def jellyfin_scan_library() -> str:
         return "✅ Library scan triggered."
     except (httpx.HTTPStatusError, httpx.RequestError) as error:
         return _http_error("jellyfin", error)
+
+
+# ════════════════════════════════════════════════════════════════
+#  Seerr Tools
+# ════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def seerr_search(term: str) -> str:
+    """Search Seerr for movies and TV shows. Returns title, year, media type,
+    TMDB ID, and overview — use the TMDB ID with seerr_request_movie /
+    seerr_request_tv to request it."""
+    data = _seerr("/search", params={"query": term})
+    if isinstance(data, str):
+        return data
+    lines = []
+    for r in data.get("results", [])[:10]:
+        media_type = r.get("mediaType")
+        if media_type not in ("movie", "tv"):
+            continue
+        title = r.get("title") or r.get("name") or "?"
+        date = r.get("releaseDate") or r.get("firstAirDate") or ""
+        year = date[:4] if date else "?"
+        overview = (r.get("overview") or "No description.")[:150]
+        lines.append(
+            f"• {title} ({year}) [tmdbId: {r.get('id', '?')}, type: {media_type}]\n  {overview}"
+        )
+    return "\n".join(lines) or "No results found."
+
+
+@mcp.tool()
+def seerr_request_movie(tmdb_id: int) -> str:
+    """Request a movie in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
+
+    Args:
+        tmdb_id: The TMDB ID of the movie.
+    """
+    if tmdb_id <= 0:
+        return "Invalid tmdb_id."
+    data = _seerr("/request", method="POST", json={"mediaType": "movie", "mediaId": tmdb_id})
+    if isinstance(data, str):
+        return data
+    status = data.get("status", "?")
+    return f"✅ Requested movie (tmdbId: {tmdb_id}). Request id: {data.get('id', '?')}, status: {status}."
+
+
+@mcp.tool()
+def seerr_request_tv(tmdb_id: int, seasons: str = "all") -> str:
+    """Request a TV show in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
+
+    Args:
+        tmdb_id: The TMDB ID of the show.
+        seasons: "all" for every season, or a comma-separated list of season
+            numbers (e.g. "1,2,3").
+    """
+    if tmdb_id <= 0:
+        return "Invalid tmdb_id."
+    if seasons.strip().lower() == "all":
+        season_payload = "all"
+    else:
+        try:
+            season_payload = [int(s.strip()) for s in seasons.split(",") if s.strip()]
+        except ValueError:
+            return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
+        if not season_payload:
+            return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
+    data = _seerr(
+        "/request",
+        method="POST",
+        json={"mediaType": "tv", "mediaId": tmdb_id, "seasons": season_payload},
+    )
+    if isinstance(data, str):
+        return data
+    status = data.get("status", "?")
+    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}). Request id: {data.get('id', '?')}, status: {status}."
+
+
+@mcp.tool()
+def seerr_list_requests(filter: str = "pending") -> str:
+    """List media requests in Seerr.
+
+    Args:
+        filter: One of "all", "approved", "available", "pending", "processing",
+            "unavailable", "failed" (default: "pending").
+    """
+    data = _seerr("/request", params={"filter": filter, "take": 20})
+    if isinstance(data, str):
+        return data
+    results = data.get("results", [])
+    lines = []
+    for r in results:
+        media = r.get("media", {})
+        lines.append(
+            f"• request id: {r.get('id', '?')} | type: {media.get('mediaType', '?')} "
+            f"| tmdbId: {media.get('tmdbId', '?')} | status: {r.get('status', '?')} "
+            f"| requested by: {r.get('requestedBy', {}).get('displayName', '?')}"
+        )
+    return "\n".join(lines) or f"No {filter} requests."
+
+
+@mcp.tool()
+def seerr_request_status(request_id: int) -> str:
+    """Get the status of a specific Seerr request.
+
+    Args:
+        request_id: Seerr request ID (use seerr_list_requests to find it).
+    """
+    if request_id <= 0:
+        return "Invalid request_id."
+    data = _seerr(f"/request/{request_id}")
+    if isinstance(data, str):
+        return data
+    media = data.get("media", {})
+    return (
+        f"Request id: {data.get('id', '?')}\n"
+        f"Type: {media.get('mediaType', '?')}\n"
+        f"TMDB ID: {media.get('tmdbId', '?')}\n"
+        f"Status: {data.get('status', '?')}\n"
+        f"Media status: {media.get('status', '?')}\n"
+        f"Requested by: {data.get('requestedBy', {}).get('displayName', '?')}\n"
+        f"Created: {data.get('createdAt', '?')}"
+    )
+
 
 
 # ════════════════════════════════════════════════════════════════
@@ -2861,6 +3480,30 @@ def bookshelf_search_missing() -> str:
 
 # ── Entrypoint ──
 
+def _format_config_problems() -> str:
+    where = f" (config file: {_CONFIG.path})" if _CONFIG.path else ""
+    lines = [f"configuration problems{where}:"] + [f"  - {problem}" for problem in CONFIG_PROBLEMS]
+    return "\n".join(lines)
+
+
+def _run_check(as_json: bool = False, timeout: float = doctor.DEFAULT_TIMEOUT, transport=None) -> int:
+    """--check: report every service's state; returns the process exit code."""
+    problems = list(CONFIG_PROBLEMS)
+    try:
+        _instruction_presets(INSTRUCTION_PRESETS)
+    except ValueError as error:
+        problems.append(str(error))
+    try:
+        selected = _selected_services()
+    except ValueError as error:
+        problems.append(f"ENABLED_SERVICES: {error}")
+        selected = _selected_services("auto")
+    results = doctor.run_checks(SETTINGS, selected, transport=transport, timeout=timeout)
+    render = doctor.render_json if as_json else doctor.render_text
+    sys.stdout.write(render(results, problems, _CONFIG.path))
+    return doctor.exit_code(results, problems)
+
+
 def main():
     global _active_transport
     parser = argparse.ArgumentParser(
@@ -2872,6 +3515,11 @@ def main():
         default="stdio",
         help="MCP transport (default: stdio)",
     )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=f"TOML config file (also ${config.CONFIG_ENV}); environment variables override it",
+    )
     parser.add_argument("--port", type=int, default=8000, help="HTTP port (default: 8000)")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP bind host (default: 0.0.0.0)")
     parser.add_argument(
@@ -2882,7 +3530,50 @@ def main():
     parser.add_argument(
         "--setup",
         action="store_true",
-        help="Interactively generate an ENABLED_SERVICES setting, then exit",
+        help="Interactive wizard: enter and test each service, write a private config file, "
+        "print MCP client snippets",
+    )
+    parser.add_argument(
+        "--output",
+        metavar="PATH",
+        help="With --setup: file to write (default: the --config file, else arrstack.toml or .env)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["toml", "env"],
+        default="toml",
+        help="With --setup: write a TOML config file (default) or a Docker env file",
+    )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Look for services at their usual container names and on localhost "
+        "(alone: list them; with --setup: use them as defaults)",
+    )
+    parser.add_argument(
+        "--arr-config",
+        metavar="DIR",
+        action="append",
+        default=[],
+        help="Read URL base, port and API key from an *arr config.xml in DIR (repeatable)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check every service: configured, reachable, credentials accepted, version. "
+        "Exits 1 if something enabled is broken",
+    )
+    parser.add_argument("--json", action="store_true", help="With --check: machine-readable output")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=doctor.DEFAULT_TIMEOUT,
+        help=f"With --check/--setup: per-request timeout in seconds (default: {doctor.DEFAULT_TIMEOUT:g})",
+    )
+    parser.add_argument(
+        "--print-env-example",
+        action="store_true",
+        help="Print a .env template covering every setting, then exit",
     )
     parser.add_argument(
         "--print-catalog",
@@ -2900,12 +3591,22 @@ def main():
     if args.transport in ("streamable-http", "sse"):
         _active_transport = args.transport
 
+    if args.print_env_example:
+        sys.stdout.write(config.render_env_example())
+        return
+    if args.check:
+        sys.exit(_run_check(as_json=args.json, timeout=args.timeout))
+    if args.setup:
+        sys.exit(_run_setup(args.output, args.format, args.discover, args.arr_config, args.timeout))
+    if args.discover:
+        sys.exit(_run_discover(args.arr_config, min(args.timeout, discover.DEFAULT_TIMEOUT)))
+    if CONFIG_PROBLEMS:
+        parser.error(_format_config_problems())
+
     try:
+        _instruction_presets(INSTRUCTION_PRESETS)
         if args.list_services:
             _print_service_status()
-            return
-        if args.setup:
-            _run_setup()
             return
         if args.print_catalog or args.print_server_card:
             _configure_service_tools()

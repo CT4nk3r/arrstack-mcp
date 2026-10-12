@@ -17,12 +17,12 @@ class SecurityTests(unittest.TestCase):
     def setUp(self):
         self.sonarr_url = server.SONARR_URL
         self.qbt_url = server.QBT_URL
-        self.qbt_sid = server._qbt_sid
+        self.qbt_cookies = server._qbt_cookies
 
     def tearDown(self):
         server.SONARR_URL = self.sonarr_url
         server.QBT_URL = self.qbt_url
-        server._qbt_sid = self.qbt_sid
+        server._qbt_cookies = self.qbt_cookies
 
     @patch("server.httpx.request")
     def test_search_term_is_passed_as_query_parameter(self, request):
@@ -39,9 +39,9 @@ class SecurityTests(unittest.TestCase):
     @patch("server.httpx.post")
     def test_qbt_retries_only_once_after_403(self, post, request):
         server.QBT_URL = "http://qbittorrent:8080"
-        server._qbt_sid = None
+        server._qbt_cookies = None
         login = response()
-        login.cookies.get.return_value = "sid"
+        login.cookies.items.return_value = [("SID", "sid")]
         post.return_value = login
         request.return_value = response(status_code=403)
 
@@ -55,6 +55,15 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(server.sonarr_get_series(0), "Invalid series_id.")
         self.assertEqual(server.radarr_get_movie(-1), "Invalid movie_id.")
         self.assertEqual(server.prowlarr_test_indexer(0), "Invalid indexer_id.")
+        self.assertEqual(server.seerr_request_movie(0), "Invalid tmdb_id.")
+        self.assertEqual(server.seerr_request_tv(-1), "Invalid tmdb_id.")
+        self.assertEqual(server.seerr_request_status(0), "Invalid request_id.")
+        self.assertEqual(
+            server.radarr_set_quality_profile_qualities(0, allow="x"), "Invalid profile_id."
+        )
+        self.assertEqual(
+            server.sonarr_set_quality_profile_qualities(-1, allow="x"), "Invalid profile_id."
+        )
 
     def test_dns_rebinding_protection_is_enabled(self):
         settings = server.mcp.settings.transport_security
