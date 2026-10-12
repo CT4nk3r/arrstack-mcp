@@ -139,7 +139,7 @@ The bundled `docker-compose.yml` loads `.env` with `env_file:` (or mount a TOML
 file, see the comments in it).
 
 **Updating:** `docker compose pull && docker compose up -d`. Image tags:
-`latest` (newest release), `1` / `1.2` / `1.2.3` (pin a release line or
+`latest` (newest release), `0.1` / `0.1.0` (pin a release line or
 version), `edge` (every commit to `main`, may break). To hear about new
 versions, use GitHub's **Watch → Custom → Releases** on this repo and read the
 release notes before updating; tools like Watchtower or Diun can also watch
