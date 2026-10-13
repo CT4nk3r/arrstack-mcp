@@ -3,9 +3,11 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py ard.py config.py doctor.py discover.py wizard.py ./
+COPY server.py ard.py config.py doctor.py discover.py wizard.py setup_ui.py setup.html ./
 
-RUN useradd -m -u 1000 appuser && chown -R appuser /app
+RUN useradd -m -u 1000 appuser && mkdir -p /config && chown -R appuser /app /config
+# Settings saved from the /setup page land here; mount /config to keep them.
+ENV ARRSTACK_CONFIG=/config/arrstack.toml
 USER appuser
 
 EXPOSE 8000

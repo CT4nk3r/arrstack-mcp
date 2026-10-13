@@ -56,7 +56,7 @@ def sonarr_transport(good_key=SECRET):
     return httpx.MockTransport(handler)
 
 
-ONLY_SONARR = [("Set up Sonarr", "y"), ("Set up", "n"), ("Docker", "n")]
+ONLY_SONARR = [("Numbers or names", "sonarr"), ("Docker", "n")]
 
 
 class WizardTestCase(unittest.TestCase):
@@ -94,7 +94,7 @@ class FreshSetupTests(WizardTestCase):
         self.assertNotIn(SECRET, "\n".join(io.prompts))
 
     def test_docker_answer_defaults_to_container_names(self):
-        io = ScriptedIO([("Set up Sonarr", "y"), ("Set up", "n"), ("Docker", "y")], secrets=[SECRET])
+        io = ScriptedIO([("Numbers or names", "1"), ("Docker", "y")], secrets=[SECRET])
         transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"appName": "Sonarr"}))
         self.run_wizard(io, transport=transport)
         self.assertEqual(config.load({}, str(self.output)).values["SONARR_URL"], "http://sonarr:8989")
@@ -138,10 +138,21 @@ class FreshSetupTests(WizardTestCase):
         self.run_wizard(io)
         self.assertEqual(config.load({}, str(self.output)).values["ALLOW_DESTRUCTIVE"], "false")
 
-    def test_nothing_configured_writes_nothing(self):
-        io = ScriptedIO([("Set up", "n"), ("Docker", "n")])
-        self.assertIsNone(self.run_wizard(io))
-        self.assertFalse(self.output.exists())
+    def test_picker_rejects_unknown_names_then_accepts_aliases(self):
+        io = ScriptedIO([("Numbers or names", ["books, sonar", "qbt sonarr"]), ("Docker", "n"),
+                         ("re-enter", "s")], secrets=["pw", SECRET])
+        result = self.run_wizard(io)
+        self.assertIn("Unknown: books, sonar", io.text)
+        self.assertEqual(result.configured, ["sonarr"])  # qBittorrent skipped after its test failed
+        self.assertIn("Movies & TV", io.text)  # grouped list
+
+    def test_picker_defaults_to_configured_services(self):
+        loaded = config.load({"SONARR_URL": "http://localhost:8989"})
+        io = ScriptedIO([("Docker", "n")], secrets=[SECRET])  # Enter accepts the default pick
+        result = self.run_wizard(io, loaded=loaded)
+        self.assertEqual(result.configured, ["sonarr"])
+        picker = next(p for p in io.prompts if "Numbers or names" in p)
+        self.assertIn("[1]", picker)
 
 
 class ExistingConfigTests(WizardTestCase):
@@ -156,8 +167,8 @@ class ExistingConfigTests(WizardTestCase):
         self.assertIsNotNone(result.backup)
         self.assertIn("radarr", result.backup.read_text())
         new = config.load({}, str(self.output)).values
-        self.assertEqual(new["RADARR_API_KEY"], "rk")  # declined service kept as-is
-        self.assertEqual(new["ENABLED_SERVICES"], "radarr,sonarr")  # explicit list extended
+        self.assertEqual(new["RADARR_API_KEY"], "rk")  # unpicked service keeps its values...
+        self.assertEqual(new["ENABLED_SERVICES"], "sonarr")  # ...but only picked ones are enabled
 
     def test_keeping_a_current_secret(self):
         self.output.write_text('[sonarr]\nurl = "http://localhost:8989"\napi_key = "' + SECRET + '"\n')

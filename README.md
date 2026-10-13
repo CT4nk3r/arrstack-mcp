@@ -123,17 +123,30 @@ block with `SONARR_URL`, `SONARR_API_KEY`, ...); see [Configuration](#configurat
 
 For remote clients, or to sit next to your *arr containers:
 
+No clone needed: the image is published at `ghcr.io/ct4nk3r/arrstack-mcp`
+(amd64 + arm64).
+
 ```bash
-git clone https://github.com/ct4nk3r/arrstack-mcp.git
-cd arrstack-mcp
-cp .env.example .env        # fill in the services you use
-# or: python server.py --setup --format env --output .env
+mkdir -p arrstack-mcp/config && cd arrstack-mcp
+curl -fsSLO https://raw.githubusercontent.com/ct4nk3r/arrstack-mcp/main/docker-compose.yml
 docker compose up -d
-docker compose exec arrstack-mcp python server.py --check
+docker compose logs arrstack-mcp | grep setup   # prints the setup link
 ```
 
-The bundled `docker-compose.yml` loads `.env` with `env_file:` (or mount a TOML
-file, see the comments in it). The server listens on port `8000` with
+Open the link (`http://localhost:8000/setup?token=…`): tick the services you
+use, fill in their addresses and API keys, press **Test connection** on each,
+then **Save & restart**. Your choices are saved to `./config/arrstack.toml`
+and only the ticked services become tools. See [Setup page](#setup-page).
+
+Prefer environment variables? `curl -fsSL …/main/.env.example -o .env`, fill it
+in and `docker compose up -d`; the compose file loads `.env` when present.
+
+**Updating:** `docker compose pull && docker compose up -d`. Image tags:
+`latest` (newest release), `0.1` / `0.1.0` (pin a release line or
+version), `edge` (every commit to `main`, may break). To hear about new
+versions, use GitHub's **Watch → Custom → Releases** on this repo and read the
+release notes before updating; tools like Watchtower or Diun can also watch
+the image for you. The server listens on port `8000` with
 Streamable HTTP at `/mcp`; start it with `--transport sse` for legacy clients
 that only speak SSE (endpoint `/sse`). Inside Docker, use container names in
 URLs (`http://sonarr:8989`), not `localhost`, and put `arrstack-mcp` on the same
@@ -198,6 +211,7 @@ stop the server at startup with a list of every problem.
 | `INSTRUCTION_PRESETS` | No | Comma-separated opt-in instruction presets (e.g. `hun-ncore`) |
 | `EXTRA_INSTRUCTIONS` | No | Free text appended to the server instructions |
 | `MCP_ALLOWED_HOSTS` | For HTTP/SSE | Comma-separated accepted Host headers; supports wildcard ports such as `arrstack-mcp:*` |
+| `SETUP_UI` | No | Web setup page at `/setup` on the HTTP transports: `auto` (default, on) or `false` |
 | `LOG_LEVEL` | No | Logging level (default: `INFO`; credentials are masked) |
 | `SONARR_URL` | No | Sonarr base URL (e.g. `http://localhost:8989`) |
 | `SONARR_API_KEY` | If Sonarr | Sonarr API key (Settings → General) |
@@ -234,6 +248,33 @@ stop the server at startup with a list of every problem.
 | `ARD_EMBED_CARD` | No | `auto` (embed the server card inline only when `ARD_PUBLIC_URL` is unset), `true` (always embed — best for static hosting), or `false` (always reference it by URL) |
 | `ARD_DID_WEB` | No | Opt-in `did:web` host identity (e.g. `arrstack.example.com`). Only set for a domain whose root you control and where you host a `/.well-known/did.json`; otherwise left off |
 <!-- END CONFIG TABLE -->
+
+### Setup page
+
+On the HTTP transports the server serves a small web page at `/setup` for
+picking services and entering their URLs and API keys. On first start with
+nothing configured it runs in setup mode (no tools yet) and prints the link:
+
+```text
+⚙️  No services configured yet. Open the setup page to pick yours:
+http://<this-server>:8000/setup?token=oaeGKQZJm9N0vZxB4JbIYDq-
+```
+
+- **Find my services** looks for the usual container names (`sonarr`, `radarr`,
+  `qbittorrent`, …) and `localhost`, and fills in what it finds.
+- **Test connection** runs the same checks as `--check` (✅ with the version, or
+  what's wrong).
+- **Save & restart** writes the config file (mode 600, the previous one kept
+  as a backup) and restarts the server with the new tool list.
+
+The link contains a one-time token that changes on every restart: only people
+who can read the server log can open the page. Saved API keys are never sent
+back to the browser. Values set through environment variables are shown as
+locked (they would override the page). On a headless server whose port is
+published on `127.0.0.1` only, open it through an SSH tunnel:
+`ssh -L 8000:localhost:8000 your-server`. Turn the page off with
+`SETUP_UI=false`. Without Docker, `python server.py --setup` asks the same
+questions in the terminal.
 
 ### Check your setup
 
