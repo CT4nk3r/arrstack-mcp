@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-import config
+from . import config
 
 OK, WARNING, ERROR, DISABLED, NOT_CONFIGURED = "ok", "warning", "error", "disabled", "not_configured"
 ICONS = {OK: "✅", WARNING: "⚠️ ", ERROR: "❌", DISABLED: "⏸️ ", NOT_CONFIGURED: "· "}

@@ -12,7 +12,8 @@ on:
     paths:
       - Dockerfile
       - requirements.txt
-      - "*.py"
+      - "**.py"
+      - pyproject.toml
       - .github/workflows/docker-publish.yml
   workflow_dispatch:
 

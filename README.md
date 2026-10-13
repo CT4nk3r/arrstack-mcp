@@ -56,10 +56,19 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 
 ### 1. Guided setup (recommended)
 
+With [uv](https://docs.astral.sh/uv/) installed, no clone is needed:
+
+```bash
+uvx arrstack-mcp --setup
+```
+
+(`pipx run arrstack-mcp --setup` or `pip install arrstack-mcp` work too.) From a
+source checkout instead:
+
 ```bash
 git clone https://github.com/ct4nk3r/arrstack-mcp.git
 cd arrstack-mcp
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+python -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/python server.py --setup
 ```
 
@@ -81,7 +90,9 @@ Claude Desktop, Cursor, VS Code, Claude Code and Docker.
 
 ### 2. Connect your MCP client
 
-With a config file, every client needs just the server path and `--config`:
+With a config file, every client needs just the command and `--config`. With uv
+the command is `uvx` and the arguments `["arrstack-mcp", "--config", "/path/to/arrstack.toml"]`;
+from a source checkout use the venv's Python and `server.py`, as below:
 
 **Claude Desktop / Cursor** (`claude_desktop_config.json` / `~/.cursor/mcp.json`):
 
@@ -203,7 +214,7 @@ listing `SONARR_URL=` doesn't hide the config file's value. Invalid values
 (unknown sections or keys, URLs without `http://`, unreadable secret files)
 stop the server at startup with a list of every problem.
 
-<!-- BEGIN CONFIG TABLE (generated from config.py; run tests to check) -->
+<!-- BEGIN CONFIG TABLE (generated from arrstack_mcp/config.py; run tests to check) -->
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ENABLED_SERVICES` | No | `auto` (default), `all`, or a comma-separated service subset |

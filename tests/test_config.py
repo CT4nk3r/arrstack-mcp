@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-import config
+from arrstack_mcp import config
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 

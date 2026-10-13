@@ -10,8 +10,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import config
-import setup_ui
+from arrstack_mcp import config
+from arrstack_mcp import setup_ui
 
 TOKEN = "test-token-123"
 SECRET = "ui-secret-abcdef"
@@ -33,7 +33,7 @@ class SetupUITestCase(unittest.TestCase):
         self.tmp = pathlib.Path(self._tmp.name)
         self.output = self.tmp / "arrstack.toml"
         self.restarts = []
-        timer = patch("setup_ui.threading.Timer", side_effect=self._fake_timer)
+        timer = patch("arrstack_mcp.setup_ui.threading.Timer", side_effect=self._fake_timer)
         timer.start()
         self.addCleanup(timer.stop)
 

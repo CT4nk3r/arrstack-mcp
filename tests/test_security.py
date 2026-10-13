@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import server
+from arrstack_mcp import server
 
 
 def response(data=None, status_code=200, text=""):
@@ -24,7 +24,7 @@ class SecurityTests(unittest.TestCase):
         server.QBT_URL = self.qbt_url
         server._qbt_cookies = self.qbt_cookies
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_search_term_is_passed_as_query_parameter(self, request):
         server.SONARR_URL = "http://sonarr:8989"
         request.return_value = response([])
@@ -35,8 +35,8 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(args[1], "http://sonarr:8989/api/v3/series/lookup")
         self.assertEqual(kwargs["params"], {"term": "show&apikey=leak"})
 
-    @patch("server.httpx.request")
-    @patch("server.httpx.post")
+    @patch("arrstack_mcp.server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.post")
     def test_qbt_retries_only_once_after_403(self, post, request):
         server.QBT_URL = "http://qbittorrent:8080"
         server._qbt_cookies = None

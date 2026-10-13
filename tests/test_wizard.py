@@ -6,9 +6,9 @@ import unittest
 
 import httpx
 
-import config
-import discover
-import wizard
+from arrstack_mcp import config
+from arrstack_mcp import discover
+from arrstack_mcp import wizard
 
 SECRET = "wizard-secret-5c4b3a"
 

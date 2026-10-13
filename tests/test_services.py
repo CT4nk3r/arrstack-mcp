@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-import server
+from arrstack_mcp import server
 
 
 def response(data):
@@ -38,7 +38,7 @@ class ServiceSelectionTests(unittest.TestCase):
         env = os.environ.copy()
         env["ENABLED_SERVICES"] = "romm,gamevault"
         code = (
-            "import server;"
+            "from arrstack_mcp import server;"
             "server._configure_service_tools();"
             "print(','.join(t.name for t in server.mcp._tool_manager.list_tools()))"
         )
@@ -77,7 +77,7 @@ class OptionalServiceTests(unittest.TestCase):
         for name, value in self.settings.items():
             setattr(server, name, value)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_lidarr_search_uses_structured_params(self, request):
         server.LIDARR_URL = "http://lidarr:8686"
         request.return_value = response([])
@@ -87,7 +87,7 @@ class OptionalServiceTests(unittest.TestCase):
         _, kwargs = request.call_args
         self.assertEqual(kwargs["params"], {"term": "artist&apikey=leak"})
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_sab_api_uses_structured_params(self, get):
         server.SAB_URL = "http://sab:8080"
         server.SAB_API_KEY = "key"
@@ -99,7 +99,7 @@ class OptionalServiceTests(unittest.TestCase):
         self.assertEqual(kwargs["params"]["mode"], "queue")
         self.assertEqual(kwargs["params"]["apikey"], "key")
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_bookshelf_search_uses_structured_params(self, request):
         server.BOOKSHELF_URL = "http://bookshelf:8787"
         request.return_value = response([])
@@ -109,7 +109,7 @@ class OptionalServiceTests(unittest.TestCase):
         _, kwargs = request.call_args
         self.assertEqual(kwargs["params"], {"term": "book&apikey=leak"})
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_search_uses_structured_params(self, request):
         server.SEERR_URL = "http://seerr:5055"
         request.return_value = response({"results": []})
@@ -119,7 +119,7 @@ class OptionalServiceTests(unittest.TestCase):
         _, kwargs = request.call_args
         self.assertEqual(kwargs["params"], {"query": "inception&apikey=leak"})
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_request_movie_posts_correct_body(self, request):
         server.SEERR_URL = "http://seerr:5055"
         request.return_value = response({"id": 1, "status": 2})
@@ -129,7 +129,7 @@ class OptionalServiceTests(unittest.TestCase):
         _, kwargs = request.call_args
         self.assertEqual(kwargs["json"], {"mediaType": "movie", "mediaId": 27205})
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_request_tv_accepts_all(self, request):
         server.SEERR_URL = "http://seerr:5055"
         request.return_value = response({"id": 1, "status": 2})
@@ -141,7 +141,7 @@ class OptionalServiceTests(unittest.TestCase):
             kwargs["json"], {"mediaType": "tv", "mediaId": 1399, "seasons": "all"}
         )
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_request_tv_parses_season_list(self, request):
         server.SEERR_URL = "http://seerr:5055"
         request.return_value = response({"id": 1, "status": 2})

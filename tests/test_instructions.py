@@ -3,14 +3,14 @@ import subprocess
 import sys
 import unittest
 
-import server
+from arrstack_mcp import server
 
 
 def _advertised_tools(**env_overrides):
     env = os.environ.copy()
     env.update(env_overrides)
     code = (
-        "import server;"
+        "from arrstack_mcp import server;"
         "server._configure_service_tools();"
         "print(','.join(t.name for t in server.mcp._tool_manager.list_tools()))"
     )

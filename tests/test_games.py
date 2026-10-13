@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import server
+from arrstack_mcp import server
 
 
 def response(data):
@@ -26,7 +26,7 @@ class GameLibraryTests(unittest.TestCase):
         for name, value in self.settings.items():
             setattr(server, name, value)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_romm_list_games_uses_bearer_auth_and_params(self, request):
         server.ROMM_URL = "http://romm:8080"
         server.ROMM_API_TOKEN = "token"
@@ -53,7 +53,7 @@ class GameLibraryTests(unittest.TestCase):
         self.assertEqual(kwargs["params"]["platform_ids"], 3)
         self.assertEqual(kwargs["params"]["limit"], 100)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_romm_system_info_is_public(self, request):
         server.ROMM_URL = "http://romm:8080"
         server.ROMM_API_TOKEN = ""
@@ -70,7 +70,7 @@ class GameLibraryTests(unittest.TestCase):
         self.assertIn("4.9.0", output)
         self.assertIn("nds, 3ds", output)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_gamevault_search_uses_api_key_and_params(self, request):
         server.GAMEVAULT_URL = "http://gamevault:8080"
         server.GAMEVAULT_API_KEY = "key"

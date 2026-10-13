@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import server
+from arrstack_mcp import server
 
 
 def response(data):
@@ -56,7 +56,7 @@ class SetMovieTagsTests(unittest.TestCase):
         result = server.radarr_set_movie_tags(1, tags="")
         self.assertIn("Provide at least one tag", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_add_mode_unions_with_existing_tags(self, request):
         server.RADARR_URL = "http://radarr:7878"
         movie = {"id": 5, "title": "Movie", "tags": [2]}
@@ -72,7 +72,7 @@ class SetMovieTagsTests(unittest.TestCase):
         self.assertEqual(put_call.kwargs["json"]["tags"], [2])
         self.assertIn("now [2]", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_add_mode_creates_missing_tag(self, request):
         server.RADARR_URL = "http://radarr:7878"
         movie = {"id": 5, "title": "Movie", "tags": []}
@@ -92,7 +92,7 @@ class SetMovieTagsTests(unittest.TestCase):
         self.assertEqual(put_call.kwargs["json"]["tags"], [10])
         self.assertIn("now [10]", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_remove_mode_with_unmatched_tag_errors_without_put(self, request):
         server.RADARR_URL = "http://radarr:7878"
         movie = {"id": 5, "title": "Movie", "tags": [2]}
@@ -103,7 +103,7 @@ class SetMovieTagsTests(unittest.TestCase):
         self.assertIn("not found", result)
         self.assertEqual(request.call_count, 2)  # GET movie + GET tag only, no PUT
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_remove_mode_subtracts(self, request):
         server.RADARR_URL = "http://radarr:7878"
         movie = {"id": 5, "title": "Movie", "tags": [2, 3]}
@@ -114,7 +114,7 @@ class SetMovieTagsTests(unittest.TestCase):
         put_call = request.call_args_list[-1]
         self.assertEqual(put_call.kwargs["json"]["tags"], [3])
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_set_mode_replaces_entirely(self, request):
         server.RADARR_URL = "http://radarr:7878"
         movie = {"id": 5, "title": "Movie", "tags": [2, 3]}
@@ -133,7 +133,7 @@ class ListTagsAndFilterTests(unittest.TestCase):
     def tearDown(self):
         server.RADARR_URL = self.radarr_url
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_list_tags_shows_counts(self, request):
         server.RADARR_URL = "http://radarr:7878"
         request.return_value = response(
@@ -145,7 +145,7 @@ class ListTagsAndFilterTests(unittest.TestCase):
         self.assertIn("2 - bryan", result)
         self.assertIn("3 movies", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_list_movies_by_tag_filters(self, request):
         server.RADARR_URL = "http://radarr:7878"
         movies = [
@@ -159,7 +159,7 @@ class ListTagsAndFilterTests(unittest.TestCase):
         self.assertIn("Tagged", result)
         self.assertNotIn("Untagged", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_list_movies_by_tag_reports_unknown_tag(self, request):
         server.RADARR_URL = "http://radarr:7878"
         request.side_effect = [response(ALL_TAGS)]
@@ -181,7 +181,7 @@ class SonarrTagWiringTests(unittest.TestCase):
     def tearDown(self):
         server.SONARR_URL = self.sonarr_url
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_set_series_tags_add_mode(self, request):
         server.SONARR_URL = "http://sonarr:8989"
         series = {"id": 7, "title": "Show", "tags": []}
@@ -197,7 +197,7 @@ class SonarrTagWiringTests(unittest.TestCase):
         self.assertEqual(put_call.kwargs["json"]["tags"], [2])
         self.assertIn("now [2]", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_list_series_by_tag_filters(self, request):
         server.SONARR_URL = "http://sonarr:8989"
         series_list = [

@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-import server
+from arrstack_mcp import server
 
 SECRET = "s3cr3t-api-key-value"
 
