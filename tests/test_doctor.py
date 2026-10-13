@@ -7,8 +7,8 @@ import unittest
 
 import httpx
 
-import config
-import doctor
+from arrstack_mcp import config
+from arrstack_mcp import doctor
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SECRET = "sentinel-secret-9f8e7d"

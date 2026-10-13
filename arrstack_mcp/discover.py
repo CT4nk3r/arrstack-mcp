@@ -26,7 +26,7 @@ from typing import Callable, Iterable
 
 import httpx
 
-import config
+from . import config
 
 DEFAULT_TIMEOUT = 1.5
 _ARR_BASED = ("sonarr", "radarr", "lidarr", "prowlarr", "bookshelf")

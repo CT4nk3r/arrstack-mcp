@@ -8,8 +8,8 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from starlette.testclient import TestClient
 
-import ard
-import server
+from arrstack_mcp import ard
+from arrstack_mcp import server
 
 try:
     import jsonschema

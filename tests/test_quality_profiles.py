@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import server
+from arrstack_mcp import server
 
 
 def response(data):
@@ -100,7 +100,7 @@ class SetQualityProfileQualitiesToolTests(unittest.TestCase):
         result = server.radarr_set_quality_profile_qualities(1, allow="CAM", disallow="cam")
         self.assertIn("can't be in both allow and disallow", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_applies_change_and_puts_full_profile_back(self, request):
         server.RADARR_URL = "http://radarr:7878"
         profile = {
@@ -127,7 +127,7 @@ class SetQualityProfileQualitiesToolTests(unittest.TestCase):
         self.assertIn("Updated 'HD-1080p'", result)
         self.assertIn("+Bluray-1080p", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_user_facing_input_is_case_insensitive(self, request):
         server.RADARR_URL = "http://radarr:7878"
         profile = {"id": 4, "name": "HD-1080p", "items": [flat_item("Bluray-1080p", False)]}
@@ -137,7 +137,7 @@ class SetQualityProfileQualitiesToolTests(unittest.TestCase):
 
         self.assertIn("+Bluray-1080p", result)
 
-    @patch("server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.request")
     def test_no_http_put_when_nothing_changed(self, request):
         server.RADARR_URL = "http://radarr:7878"
         profile = {"id": 4, "name": "HD-1080p", "items": [flat_item("Bluray-1080p", True)]}

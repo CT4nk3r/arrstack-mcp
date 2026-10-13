@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-import server
+from arrstack_mcp import server
 
 # A minimal but structurally valid bencoded .torrent payload.
 TORRENT_BYTES = b"d8:announce15:http://x/announce4:infod6:lengthi1e4:name4:teste e"
@@ -75,7 +75,7 @@ class AddOptionsTests(unittest.TestCase):
 
 
 class AddSourceDispatchTests(unittest.TestCase):
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_qbt_add_magnet_uses_urls_field(self, qbt):
         qbt.return_value = "Ok."
         out = server.qbt_add(MAGNET, category="tv")
@@ -89,7 +89,7 @@ class AddSourceDispatchTests(unittest.TestCase):
         self.assertIn("✅", out)
         self.assertIn("Cool.Release.1080p", out)
 
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_qbt_add_base64_uploads_file(self, qbt):
         qbt.return_value = "Ok."
         encoded = base64.b64encode(TORRENT_BYTES).decode()
@@ -105,7 +105,7 @@ class AddSourceDispatchTests(unittest.TestCase):
         self.assertEqual(kwargs["data"]["autoTMM"], "false")
         self.assertIn("✅", out)
 
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_qbt_add_torrent_file_from_local_path(self, qbt):
         qbt.return_value = "Ok."
         with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as handle:
@@ -123,8 +123,8 @@ class AddSourceDispatchTests(unittest.TestCase):
         self.assertEqual(kwargs["data"]["category"], "movies")
         self.assertIn("✅", out)
 
-    @patch("server._qbt")
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server._qbt")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_qbt_add_url_downloads_then_uploads(self, get, qbt):
         get.return_value = http_response(content=TORRENT_BYTES)
         qbt.return_value = "Ok."
@@ -136,8 +136,8 @@ class AddSourceDispatchTests(unittest.TestCase):
         self.assertEqual(kwargs["files"]["torrents"][1], TORRENT_BYTES)
         self.assertIn("✅", out)
 
-    @patch("server._qbt")
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server._qbt")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_qbt_add_url_resolving_to_magnet(self, get, qbt):
         get.return_value = http_response(content=b"magnet:?xt=urn:btih:DEADBEEF&dn=Redir")
         qbt.return_value = "Ok."
@@ -149,7 +149,7 @@ class AddSourceDispatchTests(unittest.TestCase):
         self.assertNotIn("files", kwargs)
         self.assertIn("✅", out)
 
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_paused_flag_is_forwarded(self, qbt):
         qbt.return_value = "Ok."
         out = server.qbt_add(MAGNET, paused=True)
@@ -174,13 +174,13 @@ class AddErrorHandlingTests(unittest.TestCase):
         self.assertIn("❌", out)
         self.assertIn("Unrecognized", out)
 
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_fails_response_surfaces_error(self, qbt):
         qbt.return_value = "Fails."
         out = server.qbt_add(MAGNET)
         self.assertIn("❌", out)
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_url_download_failure_is_reported(self, get):
         get.side_effect = server.httpx.RequestError("boom")
         out = server.qbt_add("https://tracker.example/file.torrent")
@@ -197,8 +197,8 @@ class QbtTransportTests(unittest.TestCase):
         server.QBT_URL = self.qbt_url
         server._qbt_cookies = self.qbt_cookies
 
-    @patch("server.httpx.request")
-    @patch("server.httpx.post")
+    @patch("arrstack_mcp.server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.post")
     def test_qbt_forwards_files_to_request(self, post, request):
         server.QBT_URL = "http://qbittorrent:8080"
         server._qbt_cookies = None
@@ -235,8 +235,8 @@ class QbtTransportTests(unittest.TestCase):
         result.raise_for_status.return_value = None
         return result
 
-    @patch("server.httpx.request")
-    @patch("server.httpx.post")
+    @patch("arrstack_mcp.server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.post")
     def test_qbt_accepts_port_scoped_sid_cookie(self, post, request):
         # qBittorrent 5.0+ names the session cookie QBT_SID_<port>.
         server.QBT_URL = "http://qbittorrent:8181"
@@ -250,8 +250,8 @@ class QbtTransportTests(unittest.TestCase):
         self.assertEqual(kwargs["cookies"], {"QBT_SID_8181": "abc123"})
         self.assertEqual(out, [])
 
-    @patch("server.httpx.request")
-    @patch("server.httpx.post")
+    @patch("arrstack_mcp.server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.post")
     def test_qbt_auth_bypass_login_without_cookie(self, post, request):
         # Whitelisted clients get "Ok." and no cookie; requests work without one.
         server.QBT_URL = "http://qbittorrent:8080"
@@ -265,8 +265,8 @@ class QbtTransportTests(unittest.TestCase):
         server._qbt("/torrents/info")
         self.assertEqual(post.call_count, 1)  # no re-login while the session holds
 
-    @patch("server.httpx.request")
-    @patch("server.httpx.post")
+    @patch("arrstack_mcp.server.httpx.request")
+    @patch("arrstack_mcp.server.httpx.post")
     def test_qbt_rejected_login_reports_credentials(self, post, request):
         server.QBT_URL = "http://qbittorrent:8080"
         server._qbt_cookies = None
@@ -335,7 +335,7 @@ class AddResultNormalizationTests(unittest.TestCase):
 
 
 class FetchTorrentTests(unittest.TestCase):
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_uses_content_disposition_filename(self, get):
         get.return_value = http_response(
             content=TORRENT_BYTES,
@@ -346,7 +346,7 @@ class FetchTorrentTests(unittest.TestCase):
         self.assertEqual(value[0], "Cool.Release.torrent")
         self.assertEqual(value[1], TORRENT_BYTES)
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_appends_torrent_extension_to_disposition_name(self, get):
         get.return_value = http_response(
             content=TORRENT_BYTES,
@@ -355,14 +355,14 @@ class FetchTorrentTests(unittest.TestCase):
         _, value = server._qbt_fetch_torrent("https://host/dl")
         self.assertTrue(value[0].endswith(".torrent"))
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_html_body_is_rejected(self, get):
         get.return_value = http_response(content=b"<html>login required</html>")
         kind, message = server._qbt_fetch_torrent("https://host/dl")
         self.assertEqual(kind, "error")
         self.assertIn("valid .torrent", message)
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_http_status_error_is_reported(self, get):
         resp = http_response()
         error_response = Mock()
@@ -376,7 +376,7 @@ class FetchTorrentTests(unittest.TestCase):
         self.assertIn("download", message.lower())
         self.assertIn("403", message)
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_redirect_to_magnet_is_captured(self, get):
         magnet = "magnet:?xt=urn:btih:DEADBEEF&dn=Redirected"
         get.return_value = redirect_response(magnet)
@@ -384,7 +384,7 @@ class FetchTorrentTests(unittest.TestCase):
         self.assertEqual(kind, "magnet")
         self.assertEqual(value, magnet)
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_redirect_chain_to_torrent_is_followed(self, get):
         get.side_effect = [
             redirect_response("https://cdn.host/real.torrent"),
@@ -395,7 +395,7 @@ class FetchTorrentTests(unittest.TestCase):
         self.assertEqual(value[1], TORRENT_BYTES)
         self.assertTrue(value[0].endswith(".torrent"))
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_relative_redirect_is_resolved(self, get):
         get.side_effect = [
             redirect_response("/files/x.torrent"),
@@ -406,7 +406,7 @@ class FetchTorrentTests(unittest.TestCase):
         second_url = get.call_args_list[1].args[0]
         self.assertEqual(second_url, "https://host/files/x.torrent")
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_redirect_loop_is_bounded(self, get):
         get.return_value = redirect_response("https://host/again")
         kind, message = server._qbt_fetch_torrent("https://host/dl?token=secret")
@@ -432,7 +432,7 @@ class UrlRedactionTests(unittest.TestCase):
     def test_redact_bare_host_has_no_marker(self):
         self.assertEqual(server._redact_url("https://tracker.example"), "tracker.example")
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_fetch_error_does_not_leak_token(self, get):
         get.return_value = http_response(content=b"<html>denied</html>")
         url = "https://tracker.example/download?apikey=TOPSECRET&passkey=PRIVATE"
@@ -442,7 +442,7 @@ class UrlRedactionTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", message)
         self.assertIn("tracker.example", message)
 
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_oversized_response_is_refused(self, get):
         big = b"d" + b"0" * 64
         get.return_value = http_response(content=big)
@@ -504,7 +504,7 @@ class ResolveSourceTests(unittest.TestCase):
 
 
 class TorrentFileSourceVariantTests(unittest.TestCase):
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_accepts_base64_content(self, qbt):
         qbt.return_value = "Ok."
         encoded = base64.b64encode(TORRENT_BYTES).decode()
@@ -515,8 +515,8 @@ class TorrentFileSourceVariantTests(unittest.TestCase):
         self.assertEqual(kwargs["files"]["torrents"][1], TORRENT_BYTES)
         self.assertIn("✅", out)
 
-    @patch("server._qbt")
-    @patch("server.httpx.get")
+    @patch("arrstack_mcp.server._qbt")
+    @patch("arrstack_mcp.server.httpx.get")
     def test_accepts_http_url(self, get, qbt):
         get.return_value = http_response(content=TORRENT_BYTES)
         qbt.return_value = "Ok."
@@ -530,13 +530,13 @@ class TorrentFileSourceVariantTests(unittest.TestCase):
 
 
 class SuccessMessageTests(unittest.TestCase):
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_category_appears_in_message(self, qbt):
         qbt.return_value = "Ok."
         out = server.qbt_add(MAGNET, category="movies")
         self.assertIn("→ movies", out)
 
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_add_magnet_reports_category_and_stopped(self, qbt):
         qbt.return_value = "Ok."
         out = server.qbt_add_magnet(MAGNET, category="tv", paused=True)
@@ -544,7 +544,7 @@ class SuccessMessageTests(unittest.TestCase):
         self.assertIn("stopped", out)
         self.assertIn("Cool.Release.1080p", out)
 
-    @patch("server._qbt")
+    @patch("arrstack_mcp.server._qbt")
     def test_not_configured_message_surfaces(self, qbt):
         qbt.return_value = "qBittorrent is not configured. Set QBT_URL and QBT_PASS."
         out = server.qbt_add(MAGNET)

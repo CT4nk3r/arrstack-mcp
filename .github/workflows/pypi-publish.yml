@@ -1,0 +1,58 @@
+name: Publish to PyPI
+
+# Builds the package and uploads it to PyPI when a GitHub release is
+# published. Uses PyPI trusted publishing (OIDC), so no API token is stored:
+# on pypi.org, add a trusted publisher for owner CT4nk3r, repository
+# arrstack-mcp, workflow pypi-publish.yml, environment pypi.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          version=$(python3 -c "import re;print(re.search(r'__version__ = \"(.+)\"', open('arrstack_mcp/__init__.py').read()).group(1))")
+          test "v$version" = "${{ github.event.release.tag_name }}" \
+            || { echo "::error::tag ${{ github.event.release.tag_name }} != package version $version"; exit 1; }
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Smoke-test the wheel
+        run: |
+          uvx --from dist/*.whl arrstack-mcp --print-env-example | head -1
+          SONARR_URL=http://sonarr:8989 SONARR_API_KEY=x uvx --from dist/*.whl arrstack-mcp --list-services
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/arrstack-mcp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

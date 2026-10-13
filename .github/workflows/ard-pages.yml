@@ -1,6 +1,6 @@
 name: Publish ARD catalog
 
-# Generates the ARD documents from server.py / ard.py and deploys them to
+# Generates the ARD documents from the arrstack_mcp package and deploys them to
 # GitHub Pages, so the ai-catalog.json is publicly hosted for discovery. The
 # catalog is always self-contained (ARD_EMBED_CARD=true) and re-published on
 # every change, so it never goes stale.
@@ -30,7 +30,7 @@ on:
     branches: [main]
     paths:
       - "server.py"
-      - "ard.py"
+      - "arrstack_mcp/**"
       - "requirements.txt"
       - ".github/pages/**"
       - ".github/workflows/ard-pages.yml"

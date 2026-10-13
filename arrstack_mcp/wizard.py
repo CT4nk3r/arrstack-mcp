@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,9 +26,9 @@ from typing import Callable, Mapping
 
 import httpx
 
-import config
-import doctor
-from discover import Found
+from . import config
+from . import doctor
+from .discover import Found
 
 
 @dataclass
@@ -220,13 +221,22 @@ def run_setup(loaded: config.LoadedConfig, output: Path, fmt: str = "toml", prom
     return SetupResult(output, working, configured, backup)
 
 
-def client_snippets(output: Path, fmt: str, server_path: Path | None = None, python: str | None = None) -> str:
-    server_path = server_path or Path(__file__).resolve().parent / "server.py"
+def server_command(python: str | None = None) -> list[str]:
+    """How to start this server: the source checkout's server.py, else the installed command."""
     python = python or sys.executable
+    checkout = Path(__file__).resolve().parent.parent / "server.py"
+    if checkout.exists():
+        return [python, str(checkout)]
+    installed = shutil.which("arrstack-mcp")
+    return [installed] if installed else [python, "-m", "arrstack_mcp"]
+
+
+def client_snippets(output: Path, fmt: str, command: list[str] | None = None) -> str:
+    command = command or server_command()
     lines = ["", "── Next steps ──", ""]
     if fmt == "toml":
-        args = [str(server_path), "--config", str(output)]
-        stdio = {"command": python, "args": args}
+        args = [*command[1:], "--config", str(output)]
+        stdio = {"command": command[0], "args": args}
         lines += [
             "Claude Desktop / Cursor (mcpServers in the client's JSON config):",
             json.dumps({"mcpServers": {"arrstack": stdio}}, indent=2),
@@ -235,7 +245,7 @@ def client_snippets(output: Path, fmt: str, server_path: Path | None = None, pyt
             json.dumps({"servers": {"arrstack": {"type": "stdio", **stdio}}}, indent=2),
             "",
             "Claude Code:",
-            "  claude mcp add arrstack -- " + " ".join(shlex.quote(part) for part in [python, *args]),
+            "  claude mcp add arrstack -- " + " ".join(shlex.quote(part) for part in [command[0], *args]),
             "",
             "Docker: mount the file and point the server at it:",
             "  volumes:",
@@ -257,6 +267,7 @@ def client_snippets(output: Path, fmt: str, server_path: Path | None = None, pyt
         "  http://<host>:8000/mcp   e.g.",
         "  openclaw mcp set arrstack '{\"url\":\"http://arrstack-mcp:8000/mcp\",\"transport\":\"streamable-http\"}'",
         "",
-        "Re-test any time: python server.py --check" + (f" --config {shlex.quote(str(output))}" if fmt == "toml" else ""),
+        "Re-test any time: " + " ".join(shlex.quote(part) for part in command) + " --check"
+        + (f" --config {shlex.quote(str(output))}" if fmt == "toml" else ""),
     ]
     return "\n".join(lines)

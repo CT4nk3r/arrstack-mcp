@@ -5,8 +5,8 @@ import unittest
 
 import httpx
 
-import config
-import discover
+from arrstack_mcp import config
+from arrstack_mcp import discover
 
 
 class FakeNetwork:

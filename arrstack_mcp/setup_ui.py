@@ -34,10 +34,10 @@ import httpx
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
-import config
-import discover
-import doctor
-import wizard
+from . import config
+from . import discover
+from . import doctor
+from . import wizard
 
 PAGE = Path(__file__).with_name("setup.html")
 _LOCKED_SOURCES = ("environment",)
