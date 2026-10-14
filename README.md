@@ -6,6 +6,40 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 ## Demo
 
+### OpenClaw + a local model, from Discord
+
+You can connect arrstack-mcp to [OpenClaw](https://github.com/openclaw/openclaw) ([docs](https://docs.openclaw.ai)) and
+chat with your media stack from Discord. In this demo, OpenClaw uses a model running locally on a homelab server
+(**Gemma 4 E4B**, served by [Ollama](https://ollama.com)). In the chat below, the bot finds the three Hobbit movies in Radarr and asks which ones to
+download; after a short follow-up ("grab all three") they are added and the downloads start.
+
+![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
+
+The result, a few moments later: Radarr is grabbing all three movies, and qBittorrent is downloading them.
+
+![Radarr showing the three Hobbit movies as downloading](screenshots/DemoOpenClawRadarrGrabbingScreenshot.png)
+
+![qBittorrent showing the three Hobbit torrents, tagged radarr, downloading](screenshots/DemoOpenClawTorrentsScreenshot.png)
+
+**Connect it to your own OpenClaw:** run arrstack-mcp over HTTP and register it, as described in
+[Quick Start](#quick-start) (the `OpenClaw` snippet). The demo setup runs arrstack-mcp with `--transport sse` in
+Docker, on the same Docker network as OpenClaw, and registers `http://arrstack-mcp:8000/sse` with `"transport":"sse"`.
+With the default Streamable HTTP transport the URL ends in `/mcp` instead (see [Transport Options](#transport-options)).
+
+**What the bot can and can't do:** arrstack-mcp itself only exposes the tools listed under
+[Available Tools](#available-tools) (search, add, queue and similar actions for your configured services). It has no
+shell, file or system access, so it is not a way to run commands on your machine. What the *rest* of the bot can do
+depends on your OpenClaw setup, which has its own tools. In the demo setup OpenClaw runs in a Docker container,
+so it cannot reach the host's services. Asked which services are running on the machine, it tried `systemctl` and the command failed:
+
+![The bot trying systemctl and failing](screenshots/DemoOpenClawSystemctlScreenshot.png)
+
+This is a container boundary, not a restriction on commands: OpenClaw's own tools (for example shell commands inside
+its container) are configured separately from arrstack-mcp. Review those settings before you expose a bot to anyone
+else.
+
+### Adding a movie with natural language
+
 ![Adding a movie with natural language](screenshots/DemoAddMovieScreenshot.png)
 
 ## Features
@@ -345,6 +379,8 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
+| `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
+| `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
 | `radarr_update_movie` | Change a movie's quality profile or monitored status |
 | `radarr_list_quality_profiles` | List quality profiles |
 | `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
