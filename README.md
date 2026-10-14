@@ -10,8 +10,7 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 You can connect arrstack-mcp to [OpenClaw](https://github.com/openclaw/openclaw) ([docs](https://docs.openclaw.ai)) and
 chat with your media stack from Discord. In this demo, OpenClaw uses a model running locally on a homelab server
-(**Gemma 4 E4B**, served by [Ollama](https://ollama.com) on the GPU, with a 64k context window configured; the model
-supports up to 128k). In the chat below, the bot finds the three Hobbit movies in Radarr and asks which ones to
+(**Gemma 4 E4B**, served by [Ollama](https://ollama.com)). In the chat below, the bot finds the three Hobbit movies in Radarr and asks which ones to
 download; after a short follow-up ("grab all three") they are added and the downloads start.
 
 ![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
@@ -30,9 +29,8 @@ With the default Streamable HTTP transport the URL ends in `/mcp` instead (see [
 **What the bot can and can't do:** arrstack-mcp itself only exposes the tools listed under
 [Available Tools](#available-tools) (search, add, queue and similar actions for your configured services). It has no
 shell, file or system access, so it is not a way to run commands on your machine. What the *rest* of the bot can do
-depends on your OpenClaw setup, which has its own tools. In the demo setup OpenClaw runs in a non-root Docker
-container with a single writable mount, no privileged mode and no access to the Docker socket, so it cannot reach the
-host's services. Asked which services are running on the machine, it tried `systemctl` and the command failed:
+depends on your OpenClaw setup, which has its own tools. In the demo setup OpenClaw runs in a Docker container,
+so it cannot reach the host's services. Asked which services are running on the machine, it tried `systemctl` and the command failed:
 
 ![The bot trying systemctl and failing](screenshots/DemoOpenClawSystemctlScreenshot.png)
 
