@@ -15,6 +15,12 @@ after a short follow-up ("grab all three") they are added and the downloads star
 
 ![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
 
+The result, a few moments later: Radarr is grabbing all three movies, and qBittorrent is downloading them.
+
+![Radarr showing the three Hobbit movies as downloading](screenshots/DemoOpenClawRadarrGrabbingScreenshot.png)
+
+![qBittorrent showing the three Hobbit torrents, tagged radarr, downloading](screenshots/DemoOpenClawTorrentsScreenshot.png)
+
 **Connect it to your own OpenClaw:** run arrstack-mcp over HTTP and register it, as described in
 [Quick Start](#quick-start) (the `OpenClaw` snippet). Any Discord channel your OpenClaw instance listens to can then
 use it.
@@ -23,6 +29,11 @@ use it.
 (search, add, queue and similar actions for your configured services, see [Available Tools](#available-tools)).
 The server has no shell, file or system access, so the model cannot run commands on your machine. Keep the
 OpenClaw instance itself limited to this server if you want that guarantee to hold for the whole bot.
+
+For example, asked which services are running on the machine, the bot tried `systemctl` and it failed, so it
+fell back to something else:
+
+![The bot trying systemctl and failing](screenshots/DemoOpenClawSystemctlScreenshot.png)
 
 ### Adding a movie with natural language
 
