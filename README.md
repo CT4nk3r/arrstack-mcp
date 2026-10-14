@@ -6,13 +6,12 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 ## Demo
 
-![Adding a movie with natural language](screenshots/DemoAddMovieScreenshot.png)
-
 ### OpenClaw + a local model, from Discord
 
 You can connect arrstack-mcp to [OpenClaw](https://github.com/openclaw/openclaw) and chat with your media stack from
 Discord. In this demo, OpenClaw runs a fully local **Gemma 4 E4B** (128k context) on a homelab server, with no cloud
-LLM involved. One chat message is enough: the model finds the movies in Radarr, adds them, and the downloads start.
+LLM involved. In the chat below, the bot finds the three Hobbit movies in Radarr and asks which ones to download;
+after a short follow-up ("grab all three") they are added and the downloads start.
 
 ![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
 
@@ -24,6 +23,10 @@ use it.
 (search, add, queue and similar actions for your configured services, see [Available Tools](#available-tools)).
 The server has no shell, file or system access, so the model cannot run commands on your machine. Keep the
 OpenClaw instance itself limited to this server if you want that guarantee to hold for the whole bot.
+
+### Adding a movie with natural language
+
+![Adding a movie with natural language](screenshots/DemoAddMovieScreenshot.png)
 
 ## Features
 
