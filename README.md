@@ -8,10 +8,11 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 ### OpenClaw + a local model, from Discord
 
-You can connect arrstack-mcp to [OpenClaw](https://github.com/openclaw/openclaw) and chat with your media stack from
-Discord. In this demo, OpenClaw runs a fully local **Gemma 4 E4B** (128k context) on a homelab server, with no cloud
-LLM involved. In the chat below, the bot finds the three Hobbit movies in Radarr and asks which ones to download;
-after a short follow-up ("grab all three") they are added and the downloads start.
+You can connect arrstack-mcp to [OpenClaw](https://github.com/openclaw/openclaw) ([docs](https://docs.openclaw.ai)) and
+chat with your media stack from Discord. In this demo, OpenClaw uses a model running locally on a homelab server
+(**Gemma 4 E4B**, served by [Ollama](https://ollama.com) on the GPU, with a 64k context window configured; the model
+supports up to 128k). In the chat below, the bot finds the three Hobbit movies in Radarr and asks which ones to
+download; after a short follow-up ("grab all three") they are added and the downloads start.
 
 ![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
 
@@ -22,18 +23,22 @@ The result, a few moments later: Radarr is grabbing all three movies, and qBitto
 ![qBittorrent showing the three Hobbit torrents, tagged radarr, downloading](screenshots/DemoOpenClawTorrentsScreenshot.png)
 
 **Connect it to your own OpenClaw:** run arrstack-mcp over HTTP and register it, as described in
-[Quick Start](#quick-start) (the `OpenClaw` snippet). Any Discord channel your OpenClaw instance listens to can then
-use it.
+[Quick Start](#quick-start) (the `OpenClaw` snippet). The demo setup runs arrstack-mcp with `--transport sse` in
+Docker, on the same Docker network as OpenClaw, and registers `http://arrstack-mcp:8000/sse` with `"transport":"sse"`.
+With the default Streamable HTTP transport the URL ends in `/mcp` instead (see [Transport Options](#transport-options)).
 
-**What the bot can and can't do:** through this server, the model can only call the tools arrstack-mcp exposes
-(search, add, queue and similar actions for your configured services, see [Available Tools](#available-tools)).
-The server has no shell, file or system access, so the model cannot run commands on your machine. Keep the
-OpenClaw instance itself limited to this server if you want that guarantee to hold for the whole bot.
-
-For example, asked which services are running on the machine, the bot tried `systemctl` and it failed, so it
-fell back to something else:
+**What the bot can and can't do:** arrstack-mcp itself only exposes the tools listed under
+[Available Tools](#available-tools) (search, add, queue and similar actions for your configured services). It has no
+shell, file or system access, so it is not a way to run commands on your machine. What the *rest* of the bot can do
+depends on your OpenClaw setup, which has its own tools. In the demo setup OpenClaw runs in a non-root Docker
+container with a single writable mount, no privileged mode and no access to the Docker socket, so it cannot reach the
+host's services. Asked which services are running on the machine, it tried `systemctl` and the command failed:
 
 ![The bot trying systemctl and failing](screenshots/DemoOpenClawSystemctlScreenshot.png)
+
+This is a container boundary, not a restriction on commands: OpenClaw's own tools (for example shell commands inside
+its container) are configured separately from arrstack-mcp. Review those settings before you expose a bot to anyone
+else.
 
 ### Adding a movie with natural language
 
