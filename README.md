@@ -10,14 +10,20 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 ### OpenClaw + a local model, from Discord
 
-arrstack-mcp also works with [OpenClaw](https://github.com/openclaw/openclaw) running a fully local model. Here,
-OpenClaw is connected to a Discord bot and uses a locally hosted **Gemma 4 E4B** (128k context) on a homelab
-server. One chat message is enough: the model finds the movies in Radarr and adds them, with no cloud
-LLM involved.
+You can connect arrstack-mcp to [OpenClaw](https://github.com/openclaw/openclaw) and chat with your media stack from
+Discord. In this demo, OpenClaw runs a fully local **Gemma 4 E4B** (128k context) on a homelab server, with no cloud
+LLM involved. One chat message is enough: the model finds the movies in Radarr, adds them, and the downloads start.
 
 ![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
 
-To set this up, point OpenClaw at the server as described in [Quick Start](#quick-start) (the `OpenClaw` snippet).
+**Connect it to your own OpenClaw:** run arrstack-mcp over HTTP and register it, as described in
+[Quick Start](#quick-start) (the `OpenClaw` snippet). Any Discord channel your OpenClaw instance listens to can then
+use it.
+
+**What the bot can and can't do:** through this server, the model can only call the tools arrstack-mcp exposes
+(search, add, queue and similar actions for your configured services, see [Available Tools](#available-tools)).
+The server has no shell, file or system access, so the model cannot run commands on your machine. Keep the
+OpenClaw instance itself limited to this server if you want that guarantee to hold for the whole bot.
 
 ## Features
 
