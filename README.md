@@ -8,6 +8,17 @@ Works with **Claude Desktop**, **Cursor**, **VS Code Copilot**, **OpenClaw**, an
 
 ![Adding a movie with natural language](screenshots/DemoAddMovieScreenshot.png)
 
+### OpenClaw + a local model, from Discord
+
+arrstack-mcp also works with [OpenClaw](https://github.com/openclaw/openclaw) running a fully local model. Here,
+OpenClaw is connected to a Discord bot and uses a locally hosted **Gemma 4 E4B** (128k context) on a homelab
+server. One chat message is enough: the model finds the movies in Radarr and adds them, with no cloud
+LLM involved.
+
+![Asking an OpenClaw Discord bot, backed by a local Gemma 4 E4B, to download The Hobbit trilogy](screenshots/DemoOpenClawDiscordScreenshot.png)
+
+To set this up, point OpenClaw at the server as described in [Quick Start](#quick-start) (the `OpenClaw` snippet).
+
 ## Features
 
 | Service | Tools |
