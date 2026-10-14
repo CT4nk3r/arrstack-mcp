@@ -345,6 +345,8 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
+| `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
+| `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
 | `radarr_update_movie` | Change a movie's quality profile or monitored status |
 | `radarr_list_quality_profiles` | List quality profiles |
 | `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |

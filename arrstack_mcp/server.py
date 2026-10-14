@@ -392,7 +392,7 @@ def _decode_json(service: str, r):
         return f"{service} returned a non-JSON response (HTTP {r.status_code})."
 
 
-def _arr_request(service, base_url, api_path, api_key, path, method="GET", json=None, params=None):
+def _arr_request(service, base_url, api_path, api_key, path, method="GET", json=None, params=None, timeout=30):
     """Shared request helper for the *arr family (X-Api-Key auth, JSON API)."""
     logger.info("%s %s %s", service, method, path)
     headers = {"X-Api-Key": api_key} if api_key else {}
@@ -403,7 +403,7 @@ def _arr_request(service, base_url, api_path, api_key, path, method="GET", json=
             headers=headers,
             json=json,
             params=params,
-            timeout=30,
+            timeout=timeout,
         )
         r.raise_for_status()
         return _decode_json(service, r)
@@ -417,10 +417,10 @@ def _sonarr(path: str, method: str = "GET", json=None, params=None):
     return _arr_request("sonarr", SONARR_URL, "/api/v3", SONARR_API_KEY, path, method, json, params)
 
 
-def _radarr(path: str, method: str = "GET", json=None, params=None):
+def _radarr(path: str, method: str = "GET", json=None, params=None, timeout=30):
     if not RADARR_URL:
         return "Radarr is not configured. Set RADARR_URL and RADARR_API_KEY."
-    return _arr_request("radarr", RADARR_URL, "/api/v3", RADARR_API_KEY, path, method, json, params)
+    return _arr_request("radarr", RADARR_URL, "/api/v3", RADARR_API_KEY, path, method, json, params, timeout)
 
 
 def _lidarr(path: str, method: str = "GET", json=None, params=None):
@@ -1791,6 +1791,87 @@ def radarr_search_missing(movie_ids: str = "") -> str:
     return str(result)
 
 
+_radarr_release_cache: list = []
+_radarr_release_movie_id: int | None = None
+
+
+@mcp.tool()
+def radarr_releases(movie_id: int, query: str = "", limit: int = 25) -> str:
+    """Interactive search: list the releases Radarr finds for a movie.
+
+    Like Radarr's "Interactive Search" dialog. Pick one with radarr_grab_release,
+    which lets Radarr track the download and import it by itself when it finishes.
+    Releases rejected by the quality profile are listed too, with the reason.
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie).
+        query: Optional filter, e.g. "atmos hallowed": every word must appear in the release title.
+        limit: Maximum number of releases to list and cache (1-100, default 25).
+    """
+    global _radarr_release_cache, _radarr_release_movie_id
+    if movie_id <= 0:
+        return "Invalid movie_id."
+    if limit < 1 or limit > 100:
+        return "Invalid limit: use 1-100."
+    # Interactive search queries every indexer live, so it can take well over 30 s.
+    data = _radarr("/release", params={"movieId": movie_id}, timeout=180)
+    if isinstance(data, str):
+        return data
+    if not isinstance(data, list):
+        return "Radarr returned an unexpected response for /release."
+    terms = query.lower().split()
+    if terms:
+        data = [r for r in data if all(t in (r.get("title") or "").lower() for t in terms)]
+    data = data[:limit]
+    _radarr_release_cache = data
+    _radarr_release_movie_id = movie_id
+    lines = []
+    for i, r in enumerate(data):
+        size_gb = (r.get("size") or 0) / 1e9
+        quality = ((r.get("quality") or {}).get("quality") or {}).get("name", "?")
+        line = (
+            f"[{i}] {r.get('title', '?')} — {size_gb:.1f} GB, {quality}, "
+            f"{r.get('protocol', '?')}, {r.get('indexer', '?')}"
+        )
+        if r.get("rejected"):
+            reasons = "; ".join(str(x) for x in (r.get("rejections") or [])) or "rejected"
+            line += f" ⚠️ rejected: {reasons}"
+        lines.append(line)
+    return "\n".join(lines) or "No releases found."
+
+
+@mcp.tool()
+def radarr_grab_release(index: int) -> str:
+    """Grab a release from the most recent radarr_releases results.
+
+    Radarr sends it to its own download client (usenet or torrent) and imports it when
+    it finishes. A release the quality profile rejected is grabbed anyway, but Radarr
+    will not import a file that is not an upgrade over the movie's existing file, so
+    delete the old file first (radarr_delete_movie_file) when replacing it.
+
+    Args:
+        index: The result number from radarr_releases (e.g. 0 for the first result).
+    """
+    if not _radarr_release_cache:
+        return "❌ No cached releases. Run radarr_releases first."
+    if index < 0 or index >= len(_radarr_release_cache):
+        return f"❌ Invalid index {index}. Valid range: 0–{len(_radarr_release_cache) - 1}."
+    release = _radarr_release_cache[index]
+    title = release.get("title", "?")
+    guid = release.get("guid")
+    indexer_id = release.get("indexerId")
+    if not guid or indexer_id is None:
+        return f"❌ Missing guid or indexerId for [{index}] {title}."
+    body = {"guid": guid, "indexerId": indexer_id}
+    if _radarr_release_movie_id:
+        body["movieId"] = _radarr_release_movie_id
+    result = _radarr("/release", method="POST", json=body)
+    if isinstance(result, str):
+        return f"❌ Failed to grab release: {result}"
+    note = " (rejected by the quality profile, grabbed anyway)" if release.get("rejected") else ""
+    return f"✅ Radarr is downloading: {title}{note}"
+
+
 # ════════════════════════════════════════════════════════════════
 #  Lidarr Tools
 # ════════════════════════════════════════════════════════════════
@@ -2093,7 +2174,10 @@ def prowlarr_search(query: str, indexer_ids: str = "") -> str:
 
 @mcp.tool()
 def prowlarr_grab(index: int) -> str:
-    """Grab a release from the most recent prowlarr_search results and send it to the download client (qBittorrent).
+    """Grab a release from the most recent prowlarr_search results and send it to a download client.
+
+    Torrents go to qBittorrent. Usenet (NZB) releases are handed to Prowlarr, which
+    sends them to its own configured usenet client (SABnzbd / NZBGet).
 
     Run prowlarr_search first, then use the [index] number from those results here.
 
@@ -2110,6 +2194,17 @@ def prowlarr_grab(index: int) -> str:
     title = release.get("title", "?")
     indexer_id = release.get("indexerId")
     guid = release.get("guid", "")
+
+    # Usenet releases are NZBs, not torrents: the qBittorrent path below cannot
+    # handle them. Prowlarr's own grab endpoint pushes the release to whichever
+    # download client it has configured for the release's protocol.
+    if str(release.get("protocol", "")).lower() == "usenet":
+        if not guid or indexer_id is None:
+            return f"❌ Missing guid or indexerId for usenet release [{index}] {title}."
+        result = _prowlarr("/search", method="POST", json={"guid": guid, "indexerId": indexer_id})
+        if isinstance(result, str):
+            return f"❌ Failed to grab release: {result}"
+        return f"✅ Sent to Prowlarr's usenet download client: {title}"
 
     # Use Prowlarr's download proxy URL if available, fall back to magnetUrl then guid
     download_url = release.get("downloadUrl") or release.get("magnetUrl") or guid
