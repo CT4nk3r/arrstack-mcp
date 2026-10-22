@@ -417,6 +417,10 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `prowlarr_search` | Search across indexers for releases |
 | `prowlarr_grab` | Send a result from the last search to qBittorrent |
 | `prowlarr_health` | Check system health warnings |
+| `prowlarr_list_applications` | List all configured applications (Radarr, Sonarr, Lidarr) |
+| `prowlarr_sync_applications` | Trigger indexer sync to connected Servarr apps |
+| `prowlarr_test_applications` | Test connection to configured Servarr applications |
+| `prowlarr_indexer_stats` | Get aggregated query and grab statistics for all indexers |
 
 ### qBittorrent (Downloads)
 
