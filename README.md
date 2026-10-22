@@ -431,6 +431,16 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `qbt_resume` | Resume a torrent |
 | `qbt_delete` | Delete a torrent (optionally with files) |
 | `qbt_transfer_info` | Global transfer statistics |
+| `qbt_set_category` | Set or change the category of a torrent |
+| `qbt_list_categories` | List all configured categories and save paths |
+| `qbt_create_category` | Create a new category with optional save path |
+| `qbt_torrent_files` | List all files inside a torrent with size and priority |
+| `qbt_torrent_trackers` | Inspect trackers, seeds, peers, and status |
+| `qbt_recheck` | Force recheck torrent data integrity |
+| `qbt_reannounce` | Force reannounce torrent to all trackers |
+| `qbt_list_tags` | List all configured tags |
+| `qbt_add_tags` | Add tags to torrents |
+| `qbt_remove_tags` | Remove tags from torrents |
 
 ### SABnzbd (Usenet Downloads)
 
