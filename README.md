@@ -417,6 +417,10 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `prowlarr_search` | Search across indexers for releases |
 | `prowlarr_grab` | Send a result from the last search to qBittorrent |
 | `prowlarr_health` | Check system health warnings |
+| `prowlarr_list_applications` | List all configured applications (Radarr, Sonarr, Lidarr) |
+| `prowlarr_sync_applications` | Trigger a full indexer sync to all connected Servarr apps |
+| `prowlarr_test_applications` | Test connection to configured Servarr applications |
+| `prowlarr_indexer_stats` | Get aggregated query and grab statistics for all indexers |
 
 ### qBittorrent (Downloads)
 
@@ -431,6 +435,16 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `qbt_resume` | Resume a torrent |
 | `qbt_delete` | Delete a torrent (optionally with files) |
 | `qbt_transfer_info` | Global transfer statistics |
+| `qbt_set_category` | Set or change the category of a torrent |
+| `qbt_list_categories` | List all configured categories and save paths |
+| `qbt_create_category` | Create a new category with optional save path |
+| `qbt_torrent_files` | List all files inside a torrent with size and priority |
+| `qbt_torrent_trackers` | Inspect trackers, seeds, peers, and status |
+| `qbt_recheck` | Force recheck torrent data integrity |
+| `qbt_reannounce` | Force reannounce torrent to all trackers |
+| `qbt_list_tags` | List all configured tags |
+| `qbt_add_tags` | Add tags to torrents |
+| `qbt_remove_tags` | Remove tags from torrents |
 
 ### SABnzbd (Usenet Downloads)
 
