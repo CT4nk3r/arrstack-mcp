@@ -2249,6 +2249,99 @@ def prowlarr_health() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def prowlarr_list_applications() -> str:
+    """List all configured applications (Radarr, Sonarr, Lidarr, etc.) connected to Prowlarr."""
+    data = _prowlarr("/applications")
+    if isinstance(data, str):
+        return data
+    if not data:
+        return "No applications configured in Prowlarr."
+    lines = []
+    for app in data:
+        app_id = app.get("id", "?")
+        name = app.get("name", "?")
+        impl = app.get("implementationName", "")
+        sync = app.get("syncLevel", "?")
+        base_url = ""
+        for f in app.get("fields", []):
+            if f.get("name") in ("baseUrl", "prowlarrUrl"):
+                base_url = f.get("value", "")
+                break
+        url_str = f" — {base_url}" if base_url else ""
+        lines.append(f"• [{app_id}] {name} ({impl}) [sync: {sync}]{url_str}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def prowlarr_sync_applications(application_id: int = 0) -> str:
+    """Trigger application sync to push indexers to connected Servarr apps.
+
+    Args:
+        application_id: Optional application ID to sync (0 = sync all applications).
+    """
+    payload = {"name": "ApplicationSync"}
+    if application_id > 0:
+        payload["applicationId"] = application_id
+    result = _prowlarr("/command", method="POST", json=payload)
+    if isinstance(result, dict):
+        target = f"for application {application_id}" if application_id > 0 else "for all applications"
+        return f"🔄 Application sync triggered {target}."
+    return str(result)
+
+
+@mcp.tool()
+def prowlarr_test_applications(application_id: int = 0) -> str:
+    """Test connection to configured Servarr applications.
+
+    Args:
+        application_id: Optional application ID to test (0 = test all applications).
+    """
+    if application_id > 0:
+        result = _prowlarr(f"/applications/{application_id}/test", method="POST")
+        if isinstance(result, str) and (result.startswith("prowlarr request") or "failed" in result.lower() or "error" in result.lower()):
+            return f"❌ Application {application_id} test failed: {result}"
+        return f"✅ Application {application_id} connection test passed."
+
+    apps = _prowlarr("/applications")
+    if isinstance(apps, str):
+        return apps
+    if not apps:
+        return "No applications configured."
+    results = []
+    for app in apps:
+        app_id = app.get("id")
+        app_name = app.get("name", f"App {app_id}")
+        res = _prowlarr(f"/applications/{app_id}/test", method="POST")
+        if isinstance(res, str) and (res.startswith("prowlarr request") or "failed" in res.lower() or "error" in res.lower()):
+            results.append(f"❌ [{app_id}] {app_name} — {res}")
+        else:
+            results.append(f"✅ [{app_id}] {app_name} — OK")
+    return "\n".join(results)
+
+
+@mcp.tool()
+def prowlarr_indexer_stats() -> str:
+    """Get aggregated query and grab statistics for all Prowlarr indexers."""
+    data = _prowlarr("/indexerstats")
+    if isinstance(data, str):
+        return data
+    stats = data.get("indexers", []) if isinstance(data, dict) else data
+    if not stats:
+        return "No indexer statistics available."
+    lines = []
+    for s in stats:
+        name = s.get("indexerName", f"ID {s.get('indexerId', '?')}")
+        queries = s.get("numberOfQueries", 0)
+        grabs = s.get("numberOfGrabs", 0)
+        failed = s.get("numberOfFailedQueries", 0)
+        avg_time = s.get("averageResponseTime", 0)
+        lines.append(
+            f"• {name}: {queries} queries, {grabs} grabs, {failed} failed (avg {avg_time}ms)"
+        )
+    return "\n".join(lines)
+
+
 # ════════════════════════════════════════════════════════════════
 #  qBittorrent Tools
 # ════════════════════════════════════════════════════════════════
