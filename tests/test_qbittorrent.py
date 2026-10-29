@@ -552,5 +552,185 @@ class SuccessMessageTests(unittest.TestCase):
         self.assertIn("not configured", out)
 
 
+class ExtendedQBittorrentToolsTests(unittest.TestCase):
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_set_category_success(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_set_category("abc123hash", "movies")
+        qbt.assert_called_once_with(
+            "/torrents/setCategory",
+            method="POST",
+            data={"hashes": "abc123hash", "category": "movies"},
+        )
+        self.assertIn("✅", out)
+        self.assertIn("movies", out)
+        self.assertIn("abc123hash", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_set_category_clear(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_set_category("abc123hash", "")
+        self.assertIn("✅", out)
+        self.assertIn("(none)", out)
+
+    def test_qbt_set_category_empty_hash(self):
+        out = server.qbt_set_category("", "movies")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_set_category_failure(self, qbt):
+        qbt.return_value = "HTTP 404: Not found"
+        out = server.qbt_set_category("abc123hash", "movies")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_list_categories(self, qbt):
+        qbt.return_value = {
+            "tv": {"savePath": "/data/tv"},
+            "movies": {"savePath": "/data/movies"},
+        }
+        out = server.qbt_list_categories()
+        self.assertIn("• movies → /data/movies", out)
+        self.assertIn("• tv → /data/tv", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_list_categories_empty(self, qbt):
+        qbt.return_value = {}
+        out = server.qbt_list_categories()
+        self.assertEqual(out, "No categories configured in qBittorrent.")
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_list_categories_error(self, qbt):
+        qbt.return_value = "Connection error"
+        out = server.qbt_list_categories()
+        self.assertEqual(out, "Connection error")
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_create_category_with_path(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_create_category("anime", "/data/anime")
+        qbt.assert_called_once_with(
+            "/torrents/createCategory",
+            method="POST",
+            data={"category": "anime", "savePath": "/data/anime"},
+        )
+        self.assertIn("✅", out)
+        self.assertIn("anime", out)
+        self.assertIn("/data/anime", out)
+
+    def test_qbt_create_category_empty_name(self):
+        out = server.qbt_create_category("  ")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_create_category_failure(self, qbt):
+        qbt.return_value = "HTTP 409: Conflict"
+        out = server.qbt_create_category("anime")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_torrent_files_success(self, qbt):
+        qbt.return_value = [
+            {"index": 0, "name": "sample.mkv", "size": 104857600, "progress": 1.0, "priority": 1},
+            {"index": 1, "name": "movie.mkv", "size": 2147483648, "progress": 0.5, "priority": 7},
+        ]
+        out = server.qbt_torrent_files("abc123hash")
+        qbt.assert_called_once_with("/torrents/files", params={"hash": "abc123hash"})
+        self.assertIn("[0] sample.mkv — 100.0 MB (100.0%) [prio: 1]", out)
+        self.assertIn("[1] movie.mkv — 2.0 GB (50.0%) [prio: 7]", out)
+
+    def test_qbt_torrent_files_empty_hash(self):
+        out = server.qbt_torrent_files("")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_torrent_files_empty_list(self, qbt):
+        qbt.return_value = []
+        out = server.qbt_torrent_files("abc123hash")
+        self.assertIn("No files found", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_torrent_trackers_success(self, qbt):
+        qbt.return_value = [
+            {"url": "udp://tracker1:1337", "status": 2, "num_seeds": 42, "num_peers": 10, "msg": ""},
+            {"url": "https://tracker2:443", "status": 4, "num_seeds": 0, "num_peers": 0, "msg": "Connection timed out"},
+        ]
+        out = server.qbt_torrent_trackers("abc123hash")
+        self.assertIn("✅ udp://tracker1:1337 [Working] — Seeds: 42, Peers: 10", out)
+        self.assertIn("❌ https://tracker2:443 [Not working] — Seeds: 0, Peers: 0 — Connection timed out", out)
+
+    def test_qbt_torrent_trackers_empty_hash(self):
+        out = server.qbt_torrent_trackers("")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_recheck_success(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_recheck("abc123hash")
+        qbt.assert_called_once_with("/torrents/recheck", method="POST", data={"hashes": "abc123hash"})
+        self.assertIn("🔄", out)
+        self.assertIn("abc123hash", out)
+
+    def test_qbt_recheck_empty_hash(self):
+        out = server.qbt_recheck("")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_reannounce_success(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_reannounce("abc123hash")
+        qbt.assert_called_once_with("/torrents/reannounce", method="POST", data={"hashes": "abc123hash"})
+        self.assertIn("📡", out)
+        self.assertIn("abc123hash", out)
+
+    def test_qbt_reannounce_empty_hash(self):
+        out = server.qbt_reannounce("")
+        self.assertIn("❌", out)
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_list_tags_success(self, qbt):
+        qbt.return_value = ["tag1", "tag2"]
+        out = server.qbt_list_tags()
+        self.assertEqual(out, "Tags: tag1, tag2")
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_list_tags_empty(self, qbt):
+        qbt.return_value = []
+        out = server.qbt_list_tags()
+        self.assertEqual(out, "No tags configured in qBittorrent.")
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_add_tags_success(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_add_tags("hash1|hash2", "hd,remux")
+        qbt.assert_called_once_with(
+            "/torrents/addTags",
+            method="POST",
+            data={"hashes": "hash1|hash2", "tags": "hd,remux"},
+        )
+        self.assertIn("🏷️", out)
+        self.assertIn("hd,remux", out)
+
+    def test_qbt_add_tags_validation(self):
+        self.assertIn("❌", server.qbt_add_tags("", "tag1"))
+        self.assertIn("❌", server.qbt_add_tags("hash1", ""))
+
+    @patch("arrstack_mcp.server._qbt")
+    def test_qbt_remove_tags_success(self, qbt):
+        qbt.return_value = "Ok."
+        out = server.qbt_remove_tags("hash1", "hd")
+        qbt.assert_called_once_with(
+            "/torrents/removeTags",
+            method="POST",
+            data={"hashes": "hash1", "tags": "hd"},
+        )
+        self.assertIn("🏷️", out)
+        self.assertIn("hd", out)
+
+    def test_qbt_remove_tags_validation(self):
+        self.assertIn("❌", server.qbt_remove_tags("", "tag1"))
+        self.assertIn("❌", server.qbt_remove_tags("hash1", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
