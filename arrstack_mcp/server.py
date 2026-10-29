@@ -2274,20 +2274,25 @@ def prowlarr_list_applications() -> str:
 
 
 @mcp.tool()
-def prowlarr_sync_applications(application_id: int = 0) -> str:
-    """Trigger application sync to push indexers to connected Servarr apps.
+def prowlarr_sync_applications() -> str:
+    """Trigger a full indexer sync from Prowlarr to all connected Servarr apps.
 
-    Args:
-        application_id: Optional application ID to sync (0 = sync all applications).
+    Prowlarr's sync command has no per-application target; it always syncs
+    every application (the same as "Sync App Indexers" in the UI).
     """
-    payload = {"name": "ApplicationSync"}
-    if application_id > 0:
-        payload["applicationId"] = application_id
-    result = _prowlarr("/command", method="POST", json=payload)
-    if isinstance(result, dict):
-        target = f"for application {application_id}" if application_id > 0 else "for all applications"
-        return f"🔄 Application sync triggered {target}."
-    return str(result)
+    result = _prowlarr(
+        "/command", method="POST", json={"name": "ApplicationIndexerSync", "forceSync": True}
+    )
+    if isinstance(result, str):
+        return result
+    return "🔄 Application indexer sync triggered for all applications."
+
+
+def _prowlarr_test_ok(result) -> bool:
+    # POST /applications/test answers a JSON "{}" on success; the request
+    # helper returns any other string on failure (HTTP 400 carries the
+    # validation errors).
+    return not isinstance(result, str) or result.strip() in ("", "{}")
 
 
 @mcp.tool()
@@ -2298,8 +2303,11 @@ def prowlarr_test_applications(application_id: int = 0) -> str:
         application_id: Optional application ID to test (0 = test all applications).
     """
     if application_id > 0:
-        result = _prowlarr(f"/applications/{application_id}/test", method="POST")
-        if isinstance(result, str) and (result.startswith("prowlarr request") or "failed" in result.lower() or "error" in result.lower()):
+        app = _prowlarr(f"/applications/{application_id}")
+        if isinstance(app, str):
+            return app
+        result = _prowlarr("/applications/test", method="POST", json=app)
+        if not _prowlarr_test_ok(result):
             return f"❌ Application {application_id} test failed: {result}"
         return f"✅ Application {application_id} connection test passed."
 
@@ -2312,8 +2320,8 @@ def prowlarr_test_applications(application_id: int = 0) -> str:
     for app in apps:
         app_id = app.get("id")
         app_name = app.get("name", f"App {app_id}")
-        res = _prowlarr(f"/applications/{app_id}/test", method="POST")
-        if isinstance(res, str) and (res.startswith("prowlarr request") or "failed" in res.lower() or "error" in res.lower()):
+        res = _prowlarr("/applications/test", method="POST", json=app)
+        if not _prowlarr_test_ok(res):
             results.append(f"❌ [{app_id}] {app_name} — {res}")
         else:
             results.append(f"✅ [{app_id}] {app_name} — OK")

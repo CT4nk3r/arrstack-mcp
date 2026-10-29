@@ -45,45 +45,39 @@ class ProwlarrApplicationsTests(unittest.TestCase):
         self.assertIn("not configured", out)
 
     @patch("arrstack_mcp.server._prowlarr")
-    def test_sync_applications_all(self, prowlarr):
-        prowlarr.return_value = {"id": 10, "name": "ApplicationSync", "status": "queued"}
+    def test_sync_applications(self, prowlarr):
+        prowlarr.return_value = {"id": 10, "name": "ApplicationIndexerSync", "status": "queued"}
 
-        out = server.prowlarr_sync_applications(0)
-
-        prowlarr.assert_called_once_with(
-            "/command", method="POST", json={"name": "ApplicationSync"}
-        )
-        self.assertIn("🔄 Application sync triggered for all applications.", out)
-
-    @patch("arrstack_mcp.server._prowlarr")
-    def test_sync_applications_single(self, prowlarr):
-        prowlarr.return_value = {"id": 11, "name": "ApplicationSync", "status": "queued"}
-
-        out = server.prowlarr_sync_applications(3)
+        out = server.prowlarr_sync_applications()
 
         prowlarr.assert_called_once_with(
-            "/command", method="POST", json={"name": "ApplicationSync", "applicationId": 3}
+            "/command", method="POST", json={"name": "ApplicationIndexerSync", "forceSync": True}
         )
-        self.assertIn("🔄 Application sync triggered for application 3.", out)
+        self.assertIn("🔄 Application indexer sync triggered for all applications.", out)
 
     @patch("arrstack_mcp.server._prowlarr")
     def test_sync_applications_error(self, prowlarr):
         prowlarr.return_value = "prowlarr request failed: HTTP 500"
-        out = server.prowlarr_sync_applications(0)
+        out = server.prowlarr_sync_applications()
         self.assertIn("HTTP 500", out)
 
     @patch("arrstack_mcp.server._prowlarr")
     def test_test_applications_single_success(self, prowlarr):
-        prowlarr.return_value = {}
+        app = {"id": 1, "name": "Radarr", "fields": []}
+        prowlarr.side_effect = [app, "{}"]
 
         out = server.prowlarr_test_applications(1)
 
-        prowlarr.assert_called_once_with("/applications/1/test", method="POST")
+        prowlarr.assert_any_call("/applications/1")
+        prowlarr.assert_called_with("/applications/test", method="POST", json=app)
         self.assertIn("✅ Application 1 connection test passed.", out)
 
     @patch("arrstack_mcp.server._prowlarr")
     def test_test_applications_single_failure(self, prowlarr):
-        prowlarr.return_value = "prowlarr request failed: HTTP 400 — Invalid API key"
+        prowlarr.side_effect = [
+            {"id": 1, "name": "Radarr"},
+            "prowlarr request failed: HTTP 400 — Invalid API key",
+        ]
 
         out = server.prowlarr_test_applications(1)
 
@@ -91,15 +85,25 @@ class ProwlarrApplicationsTests(unittest.TestCase):
         self.assertIn("Invalid API key", out)
 
     @patch("arrstack_mcp.server._prowlarr")
+    def test_test_applications_single_lookup_error(self, prowlarr):
+        prowlarr.return_value = "prowlarr request failed: HTTP 404 — Not Found"
+        out = server.prowlarr_test_applications(9)
+        self.assertIn("HTTP 404", out)
+        prowlarr.assert_called_once_with("/applications/9")
+
+    @patch("arrstack_mcp.server._prowlarr")
     def test_test_applications_all_mixed(self, prowlarr):
+        radarr = {"id": 1, "name": "Radarr"}
+        sonarr = {"id": 2, "name": "Sonarr"}
         prowlarr.side_effect = [
-            [{"id": 1, "name": "Radarr"}, {"id": 2, "name": "Sonarr"}],
-            {},  # Radarr test -> OK
+            [radarr, sonarr],
+            "{}",  # Radarr test -> OK
             "prowlarr request failed: HTTP 502",  # Sonarr test -> Fail
         ]
 
         out = server.prowlarr_test_applications(0)
 
+        prowlarr.assert_any_call("/applications/test", method="POST", json=sonarr)
         self.assertIn("✅ [1] Radarr — OK", out)
         self.assertIn("❌ [2] Sonarr — prowlarr request failed: HTTP 502", out)
 
