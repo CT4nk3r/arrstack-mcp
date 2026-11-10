@@ -16,7 +16,7 @@ import argparse
 import logging
 import binascii
 from datetime import datetime, timezone
-from urllib.parse import urlparse, parse_qs, unquote, urljoin
+from urllib.parse import urlparse, parse_qs, quote, unquote, urljoin
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -3256,7 +3256,9 @@ def seerr_search(term: str) -> str:
     """Search Seerr for movies and TV shows. Returns title, year, media type,
     TMDB ID, and overview — use the TMDB ID with seerr_request_movie /
     seerr_request_tv to request it."""
-    data = _seerr("/search", params={"query": term})
+    # httpx's `params=` encodes spaces as "+", which Seerr's /search rejects
+    # ("must be url encoded"); encode the term ourselves (%20) into the path.
+    data = _seerr(f"/search?query={quote(term, safe='')}")
     if isinstance(data, str):
         return data
     lines = []
