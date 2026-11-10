@@ -118,6 +118,7 @@
         "sab_resume_job",
         "sab_speed_limit",
         "sab_status",
+        "seerr_delete_request",
         "seerr_list_requests",
         "seerr_request_movie",
         "seerr_request_status",

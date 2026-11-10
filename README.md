@@ -80,7 +80,7 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 - `ALLOW_DESTRUCTIVE=false` hides every tool that deletes downloads or library
   files (`*_delete_queue_item`, `radarr_delete_movie_file`, `radarr_delete_movie`,
   `sonarr_delete_episode_file`, `sonarr_delete_series`, `qbt_remove_torrent`,
-  `qbt_remove_torrent_and_files`, `rdt_delete`, `sab_delete_job`).
+  `qbt_remove_torrent_and_files`, `rdt_delete`, `sab_delete_job`, `seerr_delete_request`).
   Default `true`.
 - `INSTRUCTION_PRESETS` appends opt-in workflow guidance to the server
   instructions. Available: `hun-ncore` (Hungarian dual-audio releases from nCore:
@@ -499,9 +499,10 @@ Sonarr/Radarr.
 | Tool | Description |
 |------|-------------|
 | `seerr_search` | Search movies and TV shows, returns TMDB IDs |
-| `seerr_request_movie` | Request a movie by TMDB ID |
-| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection |
+| `seerr_request_movie` | Request a movie by TMDB ID, with a quality profile name (default `1080p`) |
+| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection and quality profile name (default `1080p`) |
 | `seerr_list_requests` | List requests, filterable by status |
+| `seerr_delete_request` | Delete a request |
 | `seerr_request_status` | Get the status of a specific request |
 
 ### RomM (ROM Library)

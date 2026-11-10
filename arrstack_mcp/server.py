@@ -215,6 +215,7 @@ DESTRUCTIVE_TOOLS = frozenset({
     "radarr_delete_movie_file",
     "radarr_delete_movie",
     "lidarr_delete_queue_item",
+    "seerr_delete_request",
     "qbt_remove_torrent",
     "qbt_remove_torrent_and_files",
     "rdt_delete",
@@ -3350,30 +3351,65 @@ def seerr_search(term: str) -> str:
     return "\n".join(lines) or "No results found."
 
 
+def _seerr_resolve_profile(kind: str, quality: str):
+    """Map a quality profile name to (serverId, profileId) via Seerr's default non-4K server.
+
+    Returns an error string when the lookup fails or the name is unknown.
+    """
+    servers = _seerr(f"/service/{kind}")
+    if isinstance(servers, str):
+        return servers
+    chosen = next((s for s in servers if s.get("isDefault") and not s.get("is4k")), None)
+    if chosen is None:
+        return f"❌ Seerr has no default non-4K {kind} server configured."
+    detail = _seerr(f"/service/{kind}/{chosen['id']}")
+    if isinstance(detail, str):
+        return detail
+    profiles = detail.get("profiles") or []
+    wanted = quality.strip().lower()
+    for profile in profiles:
+        if str(profile.get("name", "")).lower() == wanted:
+            return chosen["id"], profile["id"]
+    valid = ", ".join(str(p.get("name", "?")) for p in profiles) or "none"
+    return f"❌ Unknown quality '{quality}'. Valid quality profiles: {valid}"
+
+
 @mcp.tool()
-def seerr_request_movie(tmdb_id: int) -> str:
+def seerr_request_movie(tmdb_id: int, quality: str = "1080p") -> str:
     """Request a movie in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
 
     Args:
         tmdb_id: The TMDB ID of the movie.
+        quality: Name of a Radarr quality profile on Seerr's default non-4K server
+            (case-insensitive). An unknown name returns the valid names.
     """
     if tmdb_id <= 0:
         return "Invalid tmdb_id."
-    data = _seerr("/request", method="POST", json={"mediaType": "movie", "mediaId": tmdb_id})
+    resolved = _seerr_resolve_profile("radarr", quality)
+    if isinstance(resolved, str):
+        return resolved
+    server_id, profile_id = resolved
+    data = _seerr(
+        "/request",
+        method="POST",
+        json={"mediaType": "movie", "mediaId": tmdb_id, "serverId": server_id, "profileId": profile_id},
+    )
     if isinstance(data, str):
         return data
     status = data.get("status", "?")
-    return f"✅ Requested movie (tmdbId: {tmdb_id}). Request id: {data.get('id', '?')}, status: {status}."
+    return f"✅ Requested movie (tmdbId: {tmdb_id}, quality: {quality}). Request id: {data.get('id', '?')}, status: {status}."
 
 
 @mcp.tool()
-def seerr_request_tv(tmdb_id: int, seasons: str = "all") -> str:
+def seerr_request_tv(tmdb_id: int, seasons: str = "all", quality: str = "1080p") -> str:
     """Request a TV show in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
 
     Args:
         tmdb_id: The TMDB ID of the show.
         seasons: "all" for every season, or a comma-separated list of season
             numbers (e.g. "1,2,3").
+        quality: Name of a Sonarr quality profile on Seerr's default non-4K server
+            (case-insensitive). An unknown name returns the valid names.
     """
     if tmdb_id <= 0:
         return "Invalid tmdb_id."
@@ -3386,15 +3422,25 @@ def seerr_request_tv(tmdb_id: int, seasons: str = "all") -> str:
             return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
         if not season_payload:
             return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
+    resolved = _seerr_resolve_profile("sonarr", quality)
+    if isinstance(resolved, str):
+        return resolved
+    server_id, profile_id = resolved
     data = _seerr(
         "/request",
         method="POST",
-        json={"mediaType": "tv", "mediaId": tmdb_id, "seasons": season_payload},
+        json={
+            "mediaType": "tv",
+            "mediaId": tmdb_id,
+            "seasons": season_payload,
+            "serverId": server_id,
+            "profileId": profile_id,
+        },
     )
     if isinstance(data, str):
         return data
     status = data.get("status", "?")
-    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}). Request id: {data.get('id', '?')}, status: {status}."
+    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}, quality: {quality}). Request id: {data.get('id', '?')}, status: {status}."
 
 
 @mcp.tool()
@@ -3418,6 +3464,21 @@ def seerr_list_requests(filter: str = "pending") -> str:
             f"| requested by: {r.get('requestedBy', {}).get('displayName', '?')}"
         )
     return "\n".join(lines) or f"No {filter} requests."
+
+
+@mcp.tool()
+def seerr_delete_request(request_id: int) -> str:
+    """Delete a Seerr request.
+
+    Args:
+        request_id: Seerr request ID (use seerr_list_requests to find it).
+    """
+    if request_id <= 0:
+        return "Invalid request_id."
+    result = _seerr(f"/request/{request_id}", method="DELETE")
+    if isinstance(result, str):
+        return f"❌ Failed to delete request: {result}"
+    return f"✅ Deleted request (id: {request_id})."
 
 
 @mcp.tool()
