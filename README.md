@@ -79,7 +79,8 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 
 - `ALLOW_DESTRUCTIVE=false` hides every tool that deletes downloads or library
   files (`*_delete_queue_item`, `radarr_delete_movie_file`,
-  `sonarr_delete_episode_file`, `qbt_delete`, `rdt_delete`, `sab_delete_job`).
+  `sonarr_delete_episode_file`, `qbt_remove_torrent`,
+  `qbt_remove_torrent_and_files`, `rdt_delete`, `sab_delete_job`).
   Default `true`.
 - `INSTRUCTION_PRESETS` appends opt-in workflow guidance to the server
   instructions. Available: `hun-ncore` (Hungarian dual-audio releases from nCore:
@@ -433,7 +434,8 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `qbt_add_torrent_file` | Add a .torrent from a local path, http(s) URL, or base64 content |
 | `qbt_pause` | Pause a torrent |
 | `qbt_resume` | Resume a torrent |
-| `qbt_delete` | Delete a torrent (optionally with files) |
+| `qbt_remove_torrent` | Remove a torrent, keeping its files |
+| `qbt_remove_torrent_and_files` | Remove a torrent and delete its files |
 | `qbt_transfer_info` | Global transfer statistics |
 | `qbt_set_category` | Set or change the category of a torrent |
 | `qbt_list_categories` | List all configured categories and save paths |

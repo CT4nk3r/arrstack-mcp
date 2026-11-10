@@ -213,7 +213,8 @@ DESTRUCTIVE_TOOLS = frozenset({
     "radarr_delete_queue_item",
     "radarr_delete_movie_file",
     "lidarr_delete_queue_item",
-    "qbt_delete",
+    "qbt_remove_torrent",
+    "qbt_remove_torrent_and_files",
     "rdt_delete",
     "sab_delete_job",
 })
@@ -2777,14 +2778,7 @@ def qbt_resume(torrent_hash: str) -> str:
     return f"❌ Resume failed: {result}"
 
 
-@mcp.tool()
-def qbt_delete(torrent_hash: str, delete_files: bool = False) -> str:
-    """Delete a torrent from qBittorrent.
-
-    Args:
-        torrent_hash: Hash of the torrent to delete (or "hash1|hash2").
-        delete_files: If True, also delete downloaded files from disk.
-    """
+def _qbt_remove(torrent_hash: str, delete_files: bool) -> str:
     if not torrent_hash.strip():
         return "❌ No torrent hash given."
     result = _qbt(
@@ -2793,8 +2787,28 @@ def qbt_delete(torrent_hash: str, delete_files: bool = False) -> str:
         data={"hashes": torrent_hash.strip(), "deleteFiles": str(delete_files).lower()},
     )
     if not _action_ok(result):
-        return f"❌ Delete failed: {result}"
-    return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
+        return f"❌ Remove failed: {result}"
+    return "🗑️ Removed." + (" (files removed)" if delete_files else " (files kept)")
+
+
+@mcp.tool()
+def qbt_remove_torrent(torrent_hash: str) -> str:
+    """Remove a torrent from qBittorrent but keep the downloaded files on disk.
+
+    Args:
+        torrent_hash: Hash of the torrent to remove (or "hash1|hash2").
+    """
+    return _qbt_remove(torrent_hash, delete_files=False)
+
+
+@mcp.tool()
+def qbt_remove_torrent_and_files(torrent_hash: str) -> str:
+    """Remove a torrent from qBittorrent and delete its downloaded files from disk.
+
+    Args:
+        torrent_hash: Hash of the torrent to remove (or "hash1|hash2").
+    """
+    return _qbt_remove(torrent_hash, delete_files=True)
 
 
 @mcp.tool()
