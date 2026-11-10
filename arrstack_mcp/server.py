@@ -210,8 +210,10 @@ INSTRUCTION_PRESET_TEXT = {
 DESTRUCTIVE_TOOLS = frozenset({
     "sonarr_delete_queue_item",
     "sonarr_delete_episode_file",
+    "sonarr_delete_series",
     "radarr_delete_queue_item",
     "radarr_delete_movie_file",
+    "radarr_delete_movie",
     "lidarr_delete_queue_item",
     "qbt_remove_torrent",
     "qbt_remove_torrent_and_files",
@@ -1203,6 +1205,36 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
 
 
 @mcp.tool()
+def sonarr_delete_series(
+    series_id: int, delete_files: bool = True, add_import_list_exclusion: bool = False
+) -> str:
+    """Remove a series from Sonarr, optionally deleting its files and blocking re-import.
+
+    Args:
+        series_id: Sonarr series ID (use sonarr_list_series to find it).
+        delete_files: If True, also delete the series' files from disk.
+        add_import_list_exclusion: If True, add the series to the import list exclusions so lists won't re-add it.
+    """
+    if series_id <= 0:
+        return "Invalid series_id."
+    result = _sonarr(
+        f"/series/{series_id}",
+        method="DELETE",
+        params={
+            "deleteFiles": str(delete_files).lower(),
+            "addImportListExclusion": str(add_import_list_exclusion).lower(),
+        },
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to delete series: {result}"
+    return (
+        f"✅ Removed series (id: {series_id})."
+        + (" Files deleted." if delete_files else " Files kept.")
+        + (" Added to import list exclusions." if add_import_list_exclusion else "")
+    )
+
+
+@mcp.tool()
 def sonarr_search_missing(series_id: int = 0) -> str:
     """Trigger a search for missing episodes in Sonarr.
 
@@ -1649,6 +1681,36 @@ def radarr_delete_movie_file(movie_id: int) -> str:
     if isinstance(result, str):
         return f"❌ Failed to delete movie file: {result}"
     return f"✅ Deleted file for '{movie.get('title', '?')}' (file id: {fid}). Movie is now marked as missing."
+
+
+@mcp.tool()
+def radarr_delete_movie(
+    movie_id: int, delete_files: bool = True, add_import_exclusion: bool = False
+) -> str:
+    """Remove a movie from Radarr, optionally deleting its files and blocking re-import.
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+        delete_files: If True, also delete the movie's files from disk.
+        add_import_exclusion: If True, add the movie to the import exclusion list so lists won't re-add it.
+    """
+    if movie_id <= 0:
+        return "Invalid movie_id."
+    result = _radarr(
+        f"/movie/{movie_id}",
+        method="DELETE",
+        params={
+            "deleteFiles": str(delete_files).lower(),
+            "addImportExclusion": str(add_import_exclusion).lower(),
+        },
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to delete movie: {result}"
+    return (
+        f"✅ Removed movie (id: {movie_id})."
+        + (" Files deleted." if delete_files else " Files kept.")
+        + (" Added to import exclusions." if add_import_exclusion else "")
+    )
 
 
 @mcp.tool()

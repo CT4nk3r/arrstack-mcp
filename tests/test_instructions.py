@@ -72,6 +72,8 @@ class DestructiveToolTests(unittest.TestCase):
     def test_destructive_tools_advertised_by_default(self):
         names = _advertised_tools(ENABLED_SERVICES="all", ALLOW_DESTRUCTIVE="true")
         self.assertIn("radarr_delete_movie_file", names)
+        self.assertIn("radarr_delete_movie", names)
+        self.assertIn("sonarr_delete_series", names)
         self.assertIn("qbt_remove_torrent", names)
         self.assertIn("qbt_remove_torrent_and_files", names)
 
@@ -80,6 +82,8 @@ class DestructiveToolTests(unittest.TestCase):
         self.assertFalse(names & server.DESTRUCTIVE_TOOLS)
         self.assertIn("radarr_add_movie", names)
         self.assertIn("qbt_pause", names)
+        self.assertNotIn("radarr_delete_movie", names)
+        self.assertNotIn("sonarr_delete_series", names)
         self.assertNotIn("qbt_remove_torrent", names)
         self.assertNotIn("qbt_remove_torrent_and_files", names)
 

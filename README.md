@@ -78,8 +78,8 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 ### Agent behaviour
 
 - `ALLOW_DESTRUCTIVE=false` hides every tool that deletes downloads or library
-  files (`*_delete_queue_item`, `radarr_delete_movie_file`,
-  `sonarr_delete_episode_file`, `qbt_remove_torrent`,
+  files (`*_delete_queue_item`, `radarr_delete_movie_file`, `radarr_delete_movie`,
+  `sonarr_delete_episode_file`, `sonarr_delete_series`, `qbt_remove_torrent`,
   `qbt_remove_torrent_and_files`, `rdt_delete`, `sab_delete_job`).
   Default `true`.
 - `INSTRUCTION_PRESETS` appends opt-in workflow guidance to the server
@@ -357,6 +357,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
 | `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
+| `sonarr_delete_series` | Remove a series, optionally deleting files and adding an import list exclusion |
 | `sonarr_search_missing` | Search missing episodes for one series or all |
 | `sonarr_update_series` | Change a series' quality profile or monitored status |
 | `sonarr_list_quality_profiles` | List quality profiles |
@@ -379,6 +380,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `radarr_queue` | Show current download queue |
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
+| `radarr_delete_movie` | Remove a movie, optionally deleting files and adding an import exclusion |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
 | `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
 | `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
