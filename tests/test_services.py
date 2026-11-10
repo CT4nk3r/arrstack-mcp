@@ -16,6 +16,14 @@ def response(data):
     return result
 
 
+def seerr_responses(server_id, request_data):
+    return [
+        response([{"id": server_id, "isDefault": True, "is4k": False}]),
+        response({"profiles": [{"id": 4, "name": "1080p"}]}),
+        response(request_data),
+    ]
+
+
 class ServiceSelectionTests(unittest.TestCase):
     def test_auto_selects_only_configured_services(self):
         selected = server._selected_services("auto")
@@ -122,35 +130,40 @@ class OptionalServiceTests(unittest.TestCase):
     @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_request_movie_posts_correct_body(self, request):
         server.SEERR_URL = "http://seerr:5055"
-        request.return_value = response({"id": 1, "status": 2})
+        request.side_effect = seerr_responses(2, {"id": 1, "status": 2})
 
         server.seerr_request_movie(27205)
 
         _, kwargs = request.call_args
-        self.assertEqual(kwargs["json"], {"mediaType": "movie", "mediaId": 27205})
+        self.assertEqual(
+            kwargs["json"],
+            {"mediaType": "movie", "mediaId": 27205, "serverId": 2, "profileId": 4},
+        )
 
     @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_request_tv_accepts_all(self, request):
         server.SEERR_URL = "http://seerr:5055"
-        request.return_value = response({"id": 1, "status": 2})
+        request.side_effect = seerr_responses(8, {"id": 1, "status": 2})
 
         server.seerr_request_tv(1399, seasons="all")
 
         _, kwargs = request.call_args
         self.assertEqual(
-            kwargs["json"], {"mediaType": "tv", "mediaId": 1399, "seasons": "all"}
+            kwargs["json"],
+            {"mediaType": "tv", "mediaId": 1399, "seasons": "all", "serverId": 8, "profileId": 4},
         )
 
     @patch("arrstack_mcp.server.httpx.request")
     def test_seerr_request_tv_parses_season_list(self, request):
         server.SEERR_URL = "http://seerr:5055"
-        request.return_value = response({"id": 1, "status": 2})
+        request.side_effect = seerr_responses(8, {"id": 1, "status": 2})
 
         server.seerr_request_tv(1399, seasons="1, 2,3")
 
         _, kwargs = request.call_args
         self.assertEqual(
-            kwargs["json"], {"mediaType": "tv", "mediaId": 1399, "seasons": [1, 2, 3]}
+            kwargs["json"],
+            {"mediaType": "tv", "mediaId": 1399, "seasons": [1, 2, 3], "serverId": 8, "profileId": 4},
         )
 
     def test_seerr_request_tv_rejects_invalid_seasons(self):

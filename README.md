@@ -78,8 +78,9 @@ Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
 ### Agent behaviour
 
 - `ALLOW_DESTRUCTIVE=false` hides every tool that deletes downloads or library
-  files (`*_delete_queue_item`, `radarr_delete_movie_file`,
-  `sonarr_delete_episode_file`, `qbt_delete`, `rdt_delete`, `sab_delete_job`).
+  files (`*_delete_queue_item`, `radarr_delete_movie_file`, `radarr_delete_movie`,
+  `sonarr_delete_episode_file`, `sonarr_delete_series`, `qbt_remove_torrent`,
+  `qbt_remove_torrent_and_files`, `rdt_delete`, `sab_delete_job`, `seerr_delete_request`).
   Default `true`.
 - `INSTRUCTION_PRESETS` appends opt-in workflow guidance to the server
   instructions. Available: `hun-ncore` (Hungarian dual-audio releases from nCore:
@@ -356,6 +357,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
 | `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
+| `sonarr_delete_series` | Remove a series, optionally deleting files and adding an import list exclusion |
 | `sonarr_search_missing` | Search missing episodes for one series or all |
 | `sonarr_update_series` | Change a series' quality profile or monitored status |
 | `sonarr_list_quality_profiles` | List quality profiles |
@@ -378,6 +380,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `radarr_queue` | Show current download queue |
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
+| `radarr_delete_movie` | Remove a movie, optionally deleting files and adding an import exclusion |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
 | `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
 | `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
@@ -433,7 +436,8 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `qbt_add_torrent_file` | Add a .torrent from a local path, http(s) URL, or base64 content |
 | `qbt_pause` | Pause a torrent |
 | `qbt_resume` | Resume a torrent |
-| `qbt_delete` | Delete a torrent (optionally with files) |
+| `qbt_remove_torrent` | Remove a torrent, keeping its files |
+| `qbt_remove_torrent_and_files` | Remove a torrent and delete its files |
 | `qbt_transfer_info` | Global transfer statistics |
 | `qbt_set_category` | Set or change the category of a torrent |
 | `qbt_list_categories` | List all configured categories and save paths |
@@ -495,9 +499,10 @@ Sonarr/Radarr.
 | Tool | Description |
 |------|-------------|
 | `seerr_search` | Search movies and TV shows, returns TMDB IDs |
-| `seerr_request_movie` | Request a movie by TMDB ID |
-| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection |
+| `seerr_request_movie` | Request a movie by TMDB ID, with a quality profile name (default `1080p`) |
+| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection and quality profile name (default `1080p`) |
 | `seerr_list_requests` | List requests, filterable by status |
+| `seerr_delete_request` | Delete a request |
 | `seerr_request_status` | Get the status of a specific request |
 
 ### RomM (ROM Library)

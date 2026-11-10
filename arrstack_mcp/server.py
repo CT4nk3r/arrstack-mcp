@@ -210,10 +210,14 @@ INSTRUCTION_PRESET_TEXT = {
 DESTRUCTIVE_TOOLS = frozenset({
     "sonarr_delete_queue_item",
     "sonarr_delete_episode_file",
+    "sonarr_delete_series",
     "radarr_delete_queue_item",
     "radarr_delete_movie_file",
+    "radarr_delete_movie",
     "lidarr_delete_queue_item",
-    "qbt_delete",
+    "seerr_delete_request",
+    "qbt_remove_torrent",
+    "qbt_remove_torrent_and_files",
     "rdt_delete",
     "sab_delete_job",
 })
@@ -1202,6 +1206,36 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
 
 
 @mcp.tool()
+def sonarr_delete_series(
+    series_id: int, delete_files: bool = True, add_import_list_exclusion: bool = False
+) -> str:
+    """Remove a series from Sonarr, optionally deleting its files and blocking re-import.
+
+    Args:
+        series_id: Sonarr series ID (use sonarr_list_series to find it).
+        delete_files: If True, also delete the series' files from disk.
+        add_import_list_exclusion: If True, add the series to the import list exclusions so lists won't re-add it.
+    """
+    if series_id <= 0:
+        return "Invalid series_id."
+    result = _sonarr(
+        f"/series/{series_id}",
+        method="DELETE",
+        params={
+            "deleteFiles": str(delete_files).lower(),
+            "addImportListExclusion": str(add_import_list_exclusion).lower(),
+        },
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to delete series: {result}"
+    return (
+        f"✅ Removed series (id: {series_id})."
+        + (" Files deleted." if delete_files else " Files kept.")
+        + (" Added to import list exclusions." if add_import_list_exclusion else "")
+    )
+
+
+@mcp.tool()
 def sonarr_search_missing(series_id: int = 0) -> str:
     """Trigger a search for missing episodes in Sonarr.
 
@@ -1648,6 +1682,36 @@ def radarr_delete_movie_file(movie_id: int) -> str:
     if isinstance(result, str):
         return f"❌ Failed to delete movie file: {result}"
     return f"✅ Deleted file for '{movie.get('title', '?')}' (file id: {fid}). Movie is now marked as missing."
+
+
+@mcp.tool()
+def radarr_delete_movie(
+    movie_id: int, delete_files: bool = True, add_import_exclusion: bool = False
+) -> str:
+    """Remove a movie from Radarr, optionally deleting its files and blocking re-import.
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+        delete_files: If True, also delete the movie's files from disk.
+        add_import_exclusion: If True, add the movie to the import exclusion list so lists won't re-add it.
+    """
+    if movie_id <= 0:
+        return "Invalid movie_id."
+    result = _radarr(
+        f"/movie/{movie_id}",
+        method="DELETE",
+        params={
+            "deleteFiles": str(delete_files).lower(),
+            "addImportExclusion": str(add_import_exclusion).lower(),
+        },
+    )
+    if isinstance(result, str):
+        return f"❌ Failed to delete movie: {result}"
+    return (
+        f"✅ Removed movie (id: {movie_id})."
+        + (" Files deleted." if delete_files else " Files kept.")
+        + (" Added to import exclusions." if add_import_exclusion else "")
+    )
 
 
 @mcp.tool()
@@ -2777,14 +2841,7 @@ def qbt_resume(torrent_hash: str) -> str:
     return f"❌ Resume failed: {result}"
 
 
-@mcp.tool()
-def qbt_delete(torrent_hash: str, delete_files: bool = False) -> str:
-    """Delete a torrent from qBittorrent.
-
-    Args:
-        torrent_hash: Hash of the torrent to delete (or "hash1|hash2").
-        delete_files: If True, also delete downloaded files from disk.
-    """
+def _qbt_remove(torrent_hash: str, delete_files: bool) -> str:
     if not torrent_hash.strip():
         return "❌ No torrent hash given."
     result = _qbt(
@@ -2793,8 +2850,28 @@ def qbt_delete(torrent_hash: str, delete_files: bool = False) -> str:
         data={"hashes": torrent_hash.strip(), "deleteFiles": str(delete_files).lower()},
     )
     if not _action_ok(result):
-        return f"❌ Delete failed: {result}"
-    return "🗑️ Deleted." + (" (files removed)" if delete_files else " (files kept)")
+        return f"❌ Remove failed: {result}"
+    return "🗑️ Removed." + (" (files removed)" if delete_files else " (files kept)")
+
+
+@mcp.tool()
+def qbt_remove_torrent(torrent_hash: str) -> str:
+    """Remove a torrent from qBittorrent but keep the downloaded files on disk.
+
+    Args:
+        torrent_hash: Hash of the torrent to remove (or "hash1|hash2").
+    """
+    return _qbt_remove(torrent_hash, delete_files=False)
+
+
+@mcp.tool()
+def qbt_remove_torrent_and_files(torrent_hash: str) -> str:
+    """Remove a torrent from qBittorrent and delete its downloaded files from disk.
+
+    Args:
+        torrent_hash: Hash of the torrent to remove (or "hash1|hash2").
+    """
+    return _qbt_remove(torrent_hash, delete_files=True)
 
 
 @mcp.tool()
@@ -3274,30 +3351,65 @@ def seerr_search(term: str) -> str:
     return "\n".join(lines) or "No results found."
 
 
+def _seerr_resolve_profile(kind: str, quality: str):
+    """Map a quality profile name to (serverId, profileId) via Seerr's default non-4K server.
+
+    Returns an error string when the lookup fails or the name is unknown.
+    """
+    servers = _seerr(f"/service/{kind}")
+    if isinstance(servers, str):
+        return servers
+    chosen = next((s for s in servers if s.get("isDefault") and not s.get("is4k")), None)
+    if chosen is None:
+        return f"❌ Seerr has no default non-4K {kind} server configured."
+    detail = _seerr(f"/service/{kind}/{chosen['id']}")
+    if isinstance(detail, str):
+        return detail
+    profiles = detail.get("profiles") or []
+    wanted = quality.strip().lower()
+    for profile in profiles:
+        if str(profile.get("name", "")).lower() == wanted:
+            return chosen["id"], profile["id"]
+    valid = ", ".join(str(p.get("name", "?")) for p in profiles) or "none"
+    return f"❌ Unknown quality '{quality}'. Valid quality profiles: {valid}"
+
+
 @mcp.tool()
-def seerr_request_movie(tmdb_id: int) -> str:
+def seerr_request_movie(tmdb_id: int, quality: str = "1080p") -> str:
     """Request a movie in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
 
     Args:
         tmdb_id: The TMDB ID of the movie.
+        quality: Name of a Radarr quality profile on Seerr's default non-4K server
+            (case-insensitive). An unknown name returns the valid names.
     """
     if tmdb_id <= 0:
         return "Invalid tmdb_id."
-    data = _seerr("/request", method="POST", json={"mediaType": "movie", "mediaId": tmdb_id})
+    resolved = _seerr_resolve_profile("radarr", quality)
+    if isinstance(resolved, str):
+        return resolved
+    server_id, profile_id = resolved
+    data = _seerr(
+        "/request",
+        method="POST",
+        json={"mediaType": "movie", "mediaId": tmdb_id, "serverId": server_id, "profileId": profile_id},
+    )
     if isinstance(data, str):
         return data
     status = data.get("status", "?")
-    return f"✅ Requested movie (tmdbId: {tmdb_id}). Request id: {data.get('id', '?')}, status: {status}."
+    return f"✅ Requested movie (tmdbId: {tmdb_id}, quality: {quality}). Request id: {data.get('id', '?')}, status: {status}."
 
 
 @mcp.tool()
-def seerr_request_tv(tmdb_id: int, seasons: str = "all") -> str:
+def seerr_request_tv(tmdb_id: int, seasons: str = "all", quality: str = "1080p") -> str:
     """Request a TV show in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
 
     Args:
         tmdb_id: The TMDB ID of the show.
         seasons: "all" for every season, or a comma-separated list of season
             numbers (e.g. "1,2,3").
+        quality: Name of a Sonarr quality profile on Seerr's default non-4K server
+            (case-insensitive). An unknown name returns the valid names.
     """
     if tmdb_id <= 0:
         return "Invalid tmdb_id."
@@ -3310,15 +3422,25 @@ def seerr_request_tv(tmdb_id: int, seasons: str = "all") -> str:
             return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
         if not season_payload:
             return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
+    resolved = _seerr_resolve_profile("sonarr", quality)
+    if isinstance(resolved, str):
+        return resolved
+    server_id, profile_id = resolved
     data = _seerr(
         "/request",
         method="POST",
-        json={"mediaType": "tv", "mediaId": tmdb_id, "seasons": season_payload},
+        json={
+            "mediaType": "tv",
+            "mediaId": tmdb_id,
+            "seasons": season_payload,
+            "serverId": server_id,
+            "profileId": profile_id,
+        },
     )
     if isinstance(data, str):
         return data
     status = data.get("status", "?")
-    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}). Request id: {data.get('id', '?')}, status: {status}."
+    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}, quality: {quality}). Request id: {data.get('id', '?')}, status: {status}."
 
 
 @mcp.tool()
@@ -3342,6 +3464,21 @@ def seerr_list_requests(filter: str = "pending") -> str:
             f"| requested by: {r.get('requestedBy', {}).get('displayName', '?')}"
         )
     return "\n".join(lines) or f"No {filter} requests."
+
+
+@mcp.tool()
+def seerr_delete_request(request_id: int) -> str:
+    """Delete a Seerr request.
+
+    Args:
+        request_id: Seerr request ID (use seerr_list_requests to find it).
+    """
+    if request_id <= 0:
+        return "Invalid request_id."
+    result = _seerr(f"/request/{request_id}", method="DELETE")
+    if isinstance(result, str):
+        return f"❌ Failed to delete request: {result}"
+    return f"✅ Deleted request (id: {request_id})."
 
 
 @mcp.tool()
