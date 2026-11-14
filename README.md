@@ -358,7 +358,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `sonarr_queue` | Show current download queue |
 | `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
-| `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
+| `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded (`blocklist=true` also blocklists the release it came from) |
 | `sonarr_search_missing` | Search missing episodes for one series or all |
 | `sonarr_update_series` | Change a series' quality profile or monitored status |
 | `sonarr_list_quality_profiles` | List quality profiles |

@@ -1338,20 +1338,71 @@ def sonarr_list_episode_files(series_id: int, season: int = -1) -> str:
     return "\n".join(lines) or "No episode files found."
 
 
+def _sonarr_grabs_for_file(series_id: int, file_id: int) -> list | str:
+    """Find the history 'grabbed' events for the release that produced a file.
+
+    The import event carries the file id and the download id. A season pack has
+    one grabbed event per episode, all sharing that download id.
+    """
+    history = _sonarr("/history/series", params={"seriesId": series_id})
+    if isinstance(history, str):
+        return history
+    imported = next(
+        (e for e in history
+         if e.get("eventType") == "downloadFolderImported"
+         and str((e.get("data") or {}).get("fileId")) == str(file_id)),
+        None,
+    )
+    if not imported or not imported.get("downloadId"):
+        return "no import record for this file in Sonarr's history (added manually, or history was cleared)"
+    grabs = [e for e in history
+             if e.get("eventType") == "grabbed" and e.get("downloadId") == imported["downloadId"]]
+    return grabs or "the grab record for this file's release is no longer in Sonarr's history"
+
+
 @mcp.tool()
-def sonarr_delete_episode_file(episode_file_id: int) -> str:
+def sonarr_delete_episode_file(episode_file_id: int, blocklist: bool = False) -> str:
     """Delete a downloaded episode file, marking it as missing in Sonarr.
     This allows Sonarr to re-search and download a new version.
 
+    Use blocklist=True when the file is damaged or the wrong version, so the
+    same release is never grabbed again. That marks the release that produced
+    the file as failed, which adds it to the blocklist; if Sonarr's "Redownload
+    Failed" setting is on, Sonarr then searches for a replacement by itself.
+    If the file came from a season pack, the whole pack is blocklisted (other
+    episodes' files are kept). Otherwise follow up with sonarr_search_missing.
+
     Args:
         episode_file_id: Episode file ID (use sonarr_list_episode_files to find it).
+        blocklist: Also blocklist the release the file came from (default False).
     """
     if episode_file_id <= 0:
         return "Invalid episode_file_id."
+    grabs = None
+    if blocklist:
+        info = _sonarr(f"/episodefile/{episode_file_id}")
+        if isinstance(info, str):
+            return info
+        grabs = _sonarr_grabs_for_file(info.get("seriesId", 0), episode_file_id)
     result = _sonarr(f"/episodefile/{episode_file_id}", method="DELETE")
     if isinstance(result, str):
         return f"❌ Failed to delete episode file: {result}"
-    return f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
+    out = f"✅ Deleted episode file (id: {episode_file_id}). Episode is now marked as missing."
+    if not blocklist:
+        return out
+    if isinstance(grabs, str):
+        return out + f"\n⚠ Not blocklisted: {grabs}. Search again with sonarr_search_missing."
+    grab = grabs[0]
+    failed = _sonarr(f"/history/failed/{grab['id']}", method="POST")
+    if isinstance(failed, str):
+        return out + f"\n⚠ Blocklisting '{grab.get('sourceTitle', '?')}' failed: {failed}"
+    out += f"\n🚫 Blocklisted '{grab.get('sourceTitle', '?')}'."
+    episodes = {g.get("episodeId") for g in grabs}
+    if len(episodes) > 1:
+        out += (f" It was a pack covering {len(episodes)} episodes; their other files are kept, "
+                "but the release is blocklisted for all of them.")
+    return out + (" Sonarr searches for a replacement automatically if 'Redownload Failed' is enabled; "
+                  "check sonarr_queue, or run sonarr_search_missing.")
 
 
 @mcp.tool()
