@@ -2239,6 +2239,15 @@ def radarr_list_cutoff_unmet(limit: int = 25) -> str:
         return data
     records = data.get("records", [])
     total = data.get("totalRecords", len(records))
+    # /wanted/cutoff returns movies without their file details; fetch them in one call.
+    files = {}
+    ids = [m["id"] for m in records if m.get("id") and not m.get("movieFile")]
+    if ids:
+        fetched = _radarr("/moviefile", params={"movieId": ids})
+        if isinstance(fetched, list):
+            files = {f.get("movieId"): f for f in fetched}
+    for m in records:
+        m.setdefault("movieFile", files.get(m.get("id")))
     lines = [f"{total} movie(s) below cutoff" + (f", showing {len(records)}:" if total > len(records) else ":")]
     for m in records:
         f = m.get("movieFile") or {}
@@ -4012,17 +4021,23 @@ def jellyfin_recent(limit: int = 10) -> str:
     Args:
         limit: Number of items to return (default: 10, max: 50).
     """
-    limit = min(limit, 50)
-    data = _jellyfin("/Items/Latest", params={"Limit": limit, "EnableImages": "false"})
+    limit = max(1, min(limit, 50))
+    # /Items/Latest needs a user id, which an API key doesn't have (HTTP 400),
+    # so sort the whole library by date added instead.
+    data = _jellyfin("/Items", params={
+        "SortBy": "DateCreated", "SortOrder": "Descending", "Recursive": "true",
+        "IncludeItemTypes": "Movie,Series,Episode,MusicAlbum", "Limit": limit, "EnableImages": "false",
+    })
     if isinstance(data, str):
         return data
     lines = []
-    for item in data:
+    for item in data.get("Items", []) if isinstance(data, dict) else data:
         name = item.get("Name", "?")
-        itype = item.get("Type", "?")
+        if item.get("Type") == "Episode" and item.get("SeriesName"):
+            name = f"{item['SeriesName']} — {name}"
         year = item.get("ProductionYear", "")
         year_str = f" ({year})" if year else ""
-        lines.append(f"• {name}{year_str} [{itype}]")
+        lines.append(f"• {name}{year_str} [{item.get('Type', '?')}]")
     return "\n".join(lines) or "Nothing recent."
 
 

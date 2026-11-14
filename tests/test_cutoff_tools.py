@@ -1,4 +1,4 @@
-"""Cutoff guard on *_set_quality_profile_qualities and *_list_cutoff_unmet."""
+"""Cutoff guard, *_list_cutoff_unmet, and jellyfin_recent."""
 
 import copy
 import unittest
@@ -38,6 +38,18 @@ class CutoffGuardTests(unittest.TestCase):
 
 
 class CutoffUnmetTests(unittest.TestCase):
+    def test_radarr_fetches_missing_file_details(self):
+        wanted = {"totalRecords": 1, "records": [{"id": 40, "title": "Inside", "year": 2021, "movieFileId": 9}]}
+        files = [{"movieId": 40, "quality": {"quality": {"name": "WEBDL-1080p"}}, "size": 2e9, "customFormatScore": 100}]
+
+        def fake(path, method="GET", json=None, params=None, timeout=30):
+            return wanted if path == "/wanted/cutoff" else files
+
+        with patch("arrstack_mcp.server._radarr", side_effect=fake) as radarr:
+            out = server.radarr_list_cutoff_unmet()
+        self.assertEqual(radarr.call_args.kwargs["params"], {"movieId": [40]})
+        self.assertIn("[id:40] Inside (2021) — has WEBDL-1080p, 2.0 GB, score 100", out)
+
     def test_radarr_lists_movies(self):
         data = {"totalRecords": 30, "records": [{"id": 5, "title": "Klaus", "year": 2019, "movieFile": {
             "quality": {"quality": {"name": "WEBRip-1080p"}}, "size": 3.4e9, "customFormatScore": -9900}}]}
@@ -63,3 +75,18 @@ class CutoffUnmetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JellyfinRecentTests(unittest.TestCase):
+    def test_uses_sorted_items_not_user_latest(self):
+        data = {"Items": [
+            {"Name": "Super Troopers 3", "Type": "Movie", "ProductionYear": 2026},
+            {"Name": "Chickens", "Type": "Episode", "SeriesName": "Beavis and Butt-Head", "ProductionYear": 2026},
+        ]}
+        with patch("arrstack_mcp.server._jellyfin", return_value=data) as jf:
+            out = server.jellyfin_recent(5)
+        path, params = jf.call_args.args[0], jf.call_args.kwargs["params"]
+        self.assertEqual(path, "/Items")
+        self.assertEqual((params["SortBy"], params["SortOrder"], params["Limit"]), ("DateCreated", "Descending", 5))
+        self.assertIn("• Super Troopers 3 (2026) [Movie]", out)
+        self.assertIn("• Beavis and Butt-Head — Chickens (2026) [Episode]", out)
