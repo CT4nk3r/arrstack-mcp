@@ -376,11 +376,12 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 |------|-------------|
 | `radarr_list_movies` | List all movies with download status |
 | `radarr_get_movie` | Get detailed info about a specific movie |
+| `radarr_get_movie_file` | Show a movie's file: name, size, quality, codecs, audio/subtitle languages |
 | `radarr_search` | Search for new movies to add |
 | `radarr_add_movie` | Add a movie by TMDB ID |
 | `radarr_queue` | Show current download queue |
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
-| `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
+| `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded (`blocklist=true` also blocklists the release it came from) |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
 | `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
 | `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |

@@ -1905,8 +1905,27 @@ def radarr_delete_queue_item(queue_id: int, blocklist: bool = True) -> str:
 
 
 
+def _radarr_import_preview(candidates: list) -> str:
+    """Describe manual-import candidates without importing anything."""
+    lines = [f"🔎 Preview only, nothing imported. {len(candidates)} file(s):"]
+    for c in candidates:
+        movie = c.get("movie") or {}
+        target = f"{movie.get('title', '?')} ({movie.get('year', '?')})" if movie else "no movie match"
+        quality = ((c.get("quality") or {}).get("quality") or {}).get("name", "?")
+        langs = ", ".join(l.get("name", "?") for l in c.get("languages") or []) or "?"
+        problems = "; ".join(r.get("reason", "?") for r in c.get("rejections") or [])
+        lines.append(
+            f"  • {c.get('relativePath') or c.get('path', '?')} — {(c.get('size') or 0) / 1e9:.2f} GB, "
+            f"{quality}, languages: {langs} → {target}"
+            + (f" ⚠ {problems}" if problems else "")
+        )
+    return "\n".join(lines)
+
+
 @mcp.tool()
-def radarr_manual_import(download_id: str = "", folder: str = "", import_mode: str = "auto") -> str:
+def radarr_manual_import(
+    download_id: str = "", folder: str = "", import_mode: str = "auto", preview: bool = False
+) -> str:
     """Manually import a downloaded file Radarr couldn't auto-import (e.g. a
     "title mismatch" warning shown by radarr_queue). Uses Radarr's OWN parsed
     guess for movie/quality and only imports files it's already confident
@@ -1922,6 +1941,9 @@ def radarr_manual_import(download_id: str = "", folder: str = "", import_mode: s
         folder: Absolute path to a specific download folder to scan instead.
         import_mode: "auto" (Radarr decides copy/move per its config,
             default), "move", or "copy".
+        preview: If True, only list the files Radarr sees there (size, matched
+            movie, quality, languages, problems) and import nothing. Use this to
+            look inside a download folder; shell access to it is not available.
     """
     if not download_id and not folder:
         return "Provide download_id or folder."
@@ -1939,6 +1961,8 @@ def radarr_manual_import(download_id: str = "", folder: str = "", import_mode: s
         return candidates
     if not candidates:
         return "No importable files found."
+    if preview:
+        return _radarr_import_preview(candidates)
 
     ready, unresolved = [], []
     for c in candidates:
@@ -1982,12 +2006,93 @@ def radarr_manual_import(download_id: str = "", folder: str = "", import_mode: s
     return "\n".join(lines) or "No importable files found."
 
 @mcp.tool()
-def radarr_delete_movie_file(movie_id: int) -> str:
-    """Delete the downloaded file for a movie, marking it as missing in Radarr.
-    This allows Radarr to re-search and download a new version.
+def radarr_get_movie_file(movie_id: int) -> str:
+    """Show the file Radarr has on disk for a movie: filename, size, quality,
+    release group, custom formats, video/audio codecs, audio and subtitle
+    languages and runtime. Read-only. Use this to check whether a file is the
+    wrong version (language, quality, cut) before replacing it. The media
+    server's filesystem is not reachable from a code sandbox, so use this
+    instead of shell commands like ls.
 
     Args:
         movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+    """
+    if movie_id <= 0:
+        return "Invalid movie_id."
+    files = _radarr("/moviefile", params={"movieId": movie_id})
+    if isinstance(files, str):
+        return files
+    if not files:
+        return "This movie has no file on disk."
+    blocks = []
+    for f in files:
+        quality = ((f.get("quality") or {}).get("quality") or {}).get("name", "?")
+        mi = f.get("mediaInfo") or {}
+        langs = ", ".join(l.get("name", "?") for l in f.get("languages") or []) or "?"
+        formats = ", ".join(c.get("name", "?") for c in f.get("customFormats") or []) or "none"
+        lines = [
+            f"File id: {f.get('id', '?')}",
+            f"Path: {f.get('path') or f.get('relativePath', '?')}",
+            f"Size: {(f.get('size') or 0) / 1e9:.2f} GB",
+            f"Quality: {quality}" + (" (cutoff not met)" if f.get("qualityCutoffNotMet") else ""),
+            f"Release: {f.get('sceneName') or '?'} (group: {f.get('releaseGroup') or '?'})",
+            f"Languages: {langs}",
+            f"Custom formats: {formats} (score {f.get('customFormatScore', 0)})",
+            f"Added: {f.get('dateAdded', '?')}",
+        ]
+        if mi:
+            lines += [
+                f"Video: {mi.get('videoCodec', '?')} {mi.get('resolution', '?')} "
+                f"{mi.get('videoDynamicRangeType') or 'SDR'}, runtime {mi.get('runTime', '?')}",
+                f"Audio: {mi.get('audioCodec', '?')} {mi.get('audioChannels', '?')}ch, "
+                f"{mi.get('audioStreamCount', '?')} stream(s), languages {mi.get('audioLanguages') or '?'}",
+                f"Subtitles: {mi.get('subtitles') or 'none'}",
+            ]
+        else:
+            lines.append("Media info: not scanned yet")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _radarr_grab_for_file(movie_id: int, file_id) -> dict | str:
+    """Find the history 'grabbed' event for the release that produced a file.
+
+    Radarr's import event carries the file id and the download id; the grab
+    event with the same download id is what "mark as failed" acts on.
+    """
+    history = _radarr("/history/movie", params={"movieId": movie_id})
+    if isinstance(history, str):
+        return history
+    imported = next(
+        (e for e in history
+         if e.get("eventType") == "downloadFolderImported"
+         and str((e.get("data") or {}).get("fileId")) == str(file_id)),
+        None,
+    )
+    if not imported or not imported.get("downloadId"):
+        return "no import record for this file in Radarr's history (added manually, or history was cleared)"
+    grab = next(
+        (e for e in history
+         if e.get("eventType") == "grabbed" and e.get("downloadId") == imported["downloadId"]),
+        None,
+    )
+    return grab or "the grab record for this file's release is no longer in Radarr's history"
+
+
+@mcp.tool()
+def radarr_delete_movie_file(movie_id: int, blocklist: bool = False) -> str:
+    """Delete the downloaded file for a movie, marking it as missing in Radarr.
+    This allows Radarr to re-search and download a new version.
+
+    Use blocklist=True when the file is damaged or the wrong version, so the
+    same release is never grabbed again. That marks the release that produced
+    the file as failed, which adds it to the blocklist; if Radarr's "Redownload
+    Failed" setting is on, Radarr then searches for a replacement by itself.
+    Otherwise follow up with radarr_search_missing or radarr_releases.
+
+    Args:
+        movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
+        blocklist: Also blocklist the release the file came from (default False).
     """
     if movie_id <= 0:
         return "Invalid movie_id."
@@ -1998,10 +2103,22 @@ def radarr_delete_movie_file(movie_id: int) -> str:
     if not movie_file:
         return f"Movie '{movie.get('title', '?')}' has no file to delete."
     fid = movie_file.get("id")
+    grab = _radarr_grab_for_file(movie_id, fid) if blocklist else None
     result = _radarr(f"/moviefile/{fid}", method="DELETE")
     if isinstance(result, str):
         return f"❌ Failed to delete movie file: {result}"
-    return f"✅ Deleted file for '{movie.get('title', '?')}' (file id: {fid}). Movie is now marked as missing."
+    out = f"✅ Deleted file for '{movie.get('title', '?')}' (file id: {fid}). Movie is now marked as missing."
+    if not blocklist:
+        return out
+    if isinstance(grab, str):
+        return out + f"\n⚠ Not blocklisted: {grab}. Pick a different release with radarr_releases."
+    failed = _radarr(f"/history/failed/{grab['id']}", method="POST")
+    if isinstance(failed, str):
+        return out + f"\n⚠ Blocklisting '{grab.get('sourceTitle', '?')}' failed: {failed}"
+    return out + (
+        f"\n🚫 Blocklisted '{grab.get('sourceTitle', '?')}'. Radarr searches for a replacement "
+        "automatically if 'Redownload Failed' is enabled; check radarr_queue, or run radarr_search_missing."
+    )
 
 
 @mcp.tool()
