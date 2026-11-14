@@ -808,6 +808,15 @@ def _set_custom_format_scores(req, profile_id: int, scores: str) -> str:
             + f"\nBest possible total is now {_best_format_score(saved)}." + _score_warning(saved))
 
 
+def _cutoff_disallowed(profile) -> str:
+    """Error text when a profile's cutoff is no longer allowed, else ''."""
+    for item in profile.get("items", []):
+        if _profile_item_id(item) == profile.get("cutoff") and not item.get("allowed"):
+            return (f"❌ '{_profile_item_name(item)}' is this profile's cutoff, so it can't be disallowed. "
+                    "Move the cutoff first with the *_update_quality_profile tool, then try again.")
+    return ""
+
+
 def _apply_quality_allowlist(items, allow_lower: set, disallow_lower: set):
     """Toggle 'allowed' on quality profile items matching the given
     (lowercased) names. Radarr/Sonarr quality profiles nest grouped
@@ -1247,6 +1256,9 @@ def sonarr_set_quality_profile_qualities(profile_id: int, allow: str = "", disal
         return profile
 
     changed, not_found = _apply_quality_allowlist(profile.get("items", []), allow_lower, disallow_lower)
+    blocked = _cutoff_disallowed(profile)
+    if blocked:
+        return blocked
     if changed:
         result = _sonarr(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
         if isinstance(result, str):
@@ -1396,6 +1408,35 @@ def sonarr_set_custom_format_scores(profile_id: int, scores: str) -> str:
             (case-insensitive), e.g. "English Only - Avoid=-10000,Chromecast Optimal=50".
     """
     return _set_custom_format_scores(_sonarr, profile_id, scores)
+
+
+@mcp.tool()
+def sonarr_list_cutoff_unmet(limit: int = 25) -> str:
+    """List monitored episodes whose file is below their profile's cutoff (quality
+    or custom format score), i.e. what Sonarr would still upgrade. Upgrade a show
+    with sonarr_search_missing(series_id=...), which searches it for upgrades too.
+
+    Args:
+        limit: Maximum number of episodes to list (1-200, default 25).
+    """
+    if limit < 1 or limit > 200:
+        return "Invalid limit: use 1-200."
+    data = _sonarr("/wanted/cutoff", params={"page": 1, "pageSize": limit, "monitored": "true",
+                                             "includeSeries": "true", "includeEpisodeFile": "true",
+                                             "sortKey": "airDateUtc", "sortDirection": "descending"})
+    if isinstance(data, str):
+        return data
+    records = data.get("records", [])
+    total = data.get("totalRecords", len(records))
+    lines = [f"{total} episode(s) below cutoff" + (f", showing {len(records)}:" if total > len(records) else ":")]
+    for e in records:
+        series = e.get("series") or {}
+        f = e.get("episodeFile") or {}
+        quality = ((f.get("quality") or {}).get("quality") or {}).get("name", "?")
+        lines.append(f"  [series:{e.get('seriesId')}] {series.get('title', '?')} "
+                     f"S{e.get('seasonNumber', 0):02d}E{e.get('episodeNumber', 0):02d} — has {quality}, "
+                     f"score {f.get('customFormatScore', 0)}")
+    return "\n".join(lines) if records else "No episodes below cutoff."
 
 
 @mcp.tool()
@@ -2026,6 +2067,9 @@ def radarr_set_quality_profile_qualities(profile_id: int, allow: str = "", disal
         return profile
 
     changed, not_found = _apply_quality_allowlist(profile.get("items", []), allow_lower, disallow_lower)
+    blocked = _cutoff_disallowed(profile)
+    if blocked:
+        return blocked
     if changed:
         result = _radarr(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
         if isinstance(result, str):
@@ -2175,6 +2219,33 @@ def radarr_set_custom_format_scores(profile_id: int, scores: str) -> str:
             (case-insensitive), e.g. "English Only - Avoid=-10000,Chromecast Optimal=50".
     """
     return _set_custom_format_scores(_radarr, profile_id, scores)
+
+
+@mcp.tool()
+def radarr_list_cutoff_unmet(limit: int = 25) -> str:
+    """List monitored movies whose file is below their profile's cutoff (quality
+    or custom format score), i.e. what Radarr would still upgrade. Upgrade them in
+    small batches with radarr_search_missing(movie_ids="..."), which searches
+    the given movies for upgrades too.
+
+    Args:
+        limit: Maximum number of movies to list (1-200, default 25).
+    """
+    if limit < 1 or limit > 200:
+        return "Invalid limit: use 1-200."
+    data = _radarr("/wanted/cutoff", params={"page": 1, "pageSize": limit, "monitored": "true",
+                                             "sortKey": "movieMetadata.sortTitle", "sortDirection": "ascending"})
+    if isinstance(data, str):
+        return data
+    records = data.get("records", [])
+    total = data.get("totalRecords", len(records))
+    lines = [f"{total} movie(s) below cutoff" + (f", showing {len(records)}:" if total > len(records) else ":")]
+    for m in records:
+        f = m.get("movieFile") or {}
+        quality = ((f.get("quality") or {}).get("quality") or {}).get("name", "?")
+        lines.append(f"  [id:{m.get('id')}] {m.get('title', '?')} ({m.get('year', '?')}) — has {quality}, "
+                     f"{(f.get('size') or 0) / 1e9:.1f} GB, score {f.get('customFormatScore', 0)}")
+    return "\n".join(lines) if records else "No movies below cutoff."
 
 
 @mcp.tool()
