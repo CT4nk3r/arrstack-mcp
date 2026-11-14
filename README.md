@@ -362,6 +362,9 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `sonarr_search_missing` | Search missing episodes for one series or all |
 | `sonarr_update_series` | Change a series' quality profile or monitored status |
 | `sonarr_list_quality_profiles` | List quality profiles |
+| `sonarr_get_quality_profile` | Show a profile in full: quality order, cutoff, score thresholds, custom format scores |
+| `sonarr_update_quality_profile` | Change a profile's cutoff, upgrades allowed, and custom format score thresholds |
+| `sonarr_set_custom_format_scores` | Set custom format scores in a profile by name |
 | `sonarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
 | `sonarr_set_quality_definition` | Change size limits for a quality tier |
 | `sonarr_list_custom_formats` | List custom formats |
@@ -387,6 +390,9 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
 | `radarr_update_movie` | Change a movie's quality profile or monitored status |
 | `radarr_list_quality_profiles` | List quality profiles |
+| `radarr_get_quality_profile` | Show a profile in full: quality order, cutoff, score thresholds, custom format scores |
+| `radarr_update_quality_profile` | Change a profile's cutoff, upgrades allowed, and custom format score thresholds |
+| `radarr_set_custom_format_scores` | Set custom format scores in a profile by name |
 | `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
 | `radarr_set_quality_definition` | Change size limits for a quality tier |
 | `radarr_list_custom_formats` | List custom formats |

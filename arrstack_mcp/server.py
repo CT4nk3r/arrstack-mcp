@@ -660,6 +660,154 @@ def _format_size(size_bytes) -> str:
         size /= 1024
 
 
+# ── Quality profile editing (shared by Radarr and Sonarr) ──
+
+def _profile_item_name(item) -> str:
+    """Name of a profile item: a group's own name, or its quality's name."""
+    return item.get("name") or (item.get("quality") or {}).get("name", "?")
+
+
+def _profile_item_id(item):
+    """Id a profile's cutoff refers to: the group id, or the quality id."""
+    return item["id"] if "id" in item else (item.get("quality") or {}).get("id")
+
+
+def _profile_cutoff_name(profile) -> str:
+    for item in profile.get("items", []):
+        if _profile_item_id(item) == profile.get("cutoff"):
+            return _profile_item_name(item)
+    return f"id {profile.get('cutoff', '?')}"
+
+
+def _best_format_score(profile) -> int:
+    """Highest score a release can reach: every positive custom format at once."""
+    return sum(max(f.get("score", 0), 0) for f in profile.get("formatItems", []))
+
+
+def _profile_settings(profile) -> list:
+    return [
+        f"Cutoff: {_profile_cutoff_name(profile)}",
+        f"Upgrades allowed: {profile.get('upgradeAllowed', False)}",
+        f"Minimum custom format score: {profile.get('minFormatScore', 0)}",
+        f"Upgrade until custom format score: {profile.get('cutoffFormatScore', 0)}",
+        f"Minimum custom format score increment for an upgrade: {profile.get('minUpgradeFormatScore', 1)}",
+    ]
+
+
+def _describe_quality_profile(profile) -> str:
+    lines = [f"[{profile.get('id', '?')}] {profile.get('name', '?')}"] + _profile_settings(profile)
+    lines.append("Qualities, most preferred first (✓ allowed, ← cutoff):")
+    for item in reversed(profile.get("items", [])):
+        mark = "✓" if item.get("allowed") else "✗"
+        cutoff = "  ← cutoff" if _profile_item_id(item) == profile.get("cutoff") else ""
+        members = item.get("items") or []
+        inner = f" ({', '.join(_profile_item_name(m) for m in members)})" if members else ""
+        lines.append(f"  {mark} {_profile_item_name(item)}{inner}{cutoff}")
+    formats = sorted(profile.get("formatItems", []), key=lambda f: (-f.get("score", 0), f.get("name", "")))
+    lines.append(f"Custom format scores (best possible total: {_best_format_score(profile)}):")
+    lines += [f"  {f.get('score', 0):+d}  {f.get('name', '?')}" for f in formats] or ["  none"]
+    return "\n".join(lines)
+
+
+def _get_quality_profile(req, profile_id: int) -> str:
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    profile = req(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+    return _describe_quality_profile(profile)
+
+
+def _score_warning(profile) -> str:
+    best = _best_format_score(profile)
+    if profile.get("minFormatScore", 0) > best:
+        return (f"\n⚠ Minimum score {profile['minFormatScore']} is above the best possible total "
+                f"({best}): every release will be rejected.")
+    return ""
+
+
+def _update_quality_profile(req, profile_id, cutoff, upgrade_allowed, min_format_score,
+                            cutoff_format_score, min_upgrade_format_score) -> str:
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    if upgrade_allowed not in (-1, 0, 1):
+        return "Invalid upgrade_allowed: use 1 (on), 0 (off) or -1 (keep)."
+    if min_upgrade_format_score is not None and min_upgrade_format_score < 1:
+        return "Invalid min_upgrade_format_score: must be 1 or more."
+    profile = req(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+    before = _profile_settings(profile)
+    changed = False
+    if cutoff.strip():
+        wanted = cutoff.strip().lower()
+        match = next((i for i in profile.get("items", []) if _profile_item_name(i).lower() == wanted), None)
+        if not match:
+            names = ", ".join(_profile_item_name(i) for i in reversed(profile.get("items", [])))
+            return f"❌ No quality or group named '{cutoff}' in this profile. Choose from: {names}"
+        if not match.get("allowed"):
+            return f"❌ '{_profile_item_name(match)}' is not allowed in this profile, so it can't be the cutoff. Allow it first."
+        profile["cutoff"] = _profile_item_id(match)
+        changed = True
+    if upgrade_allowed != -1:
+        profile["upgradeAllowed"] = bool(upgrade_allowed)
+        changed = True
+    for key, value in (("minFormatScore", min_format_score), ("cutoffFormatScore", cutoff_format_score),
+                       ("minUpgradeFormatScore", min_upgrade_format_score)):
+        if value is not None:
+            profile[key] = value
+            changed = True
+    if not changed:
+        return "Nothing to change: pass at least one setting."
+    result = req(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
+    if isinstance(result, str):
+        return f"❌ Failed to update profile: {result}"
+    saved = result if isinstance(result, dict) and result.get("items") else profile
+    diff = [f"  {b}  →  {a.split(': ', 1)[1]}" for b, a in zip(before, _profile_settings(saved)) if a != b]
+    return (f"✅ Updated profile '{profile.get('name', profile_id)}':\n" + "\n".join(diff or ["  (no effective change)"])
+            + _score_warning(saved))
+
+
+def _set_custom_format_scores(req, profile_id: int, scores: str) -> str:
+    if profile_id <= 0:
+        return "Invalid profile_id."
+    wanted = {}
+    for part in (p.strip() for p in scores.split(",")):
+        if not part:
+            continue
+        name, sep, value = part.rpartition("=")
+        try:
+            if not sep or not name.strip():
+                raise ValueError
+            wanted[name.strip().lower()] = (name.strip(), int(value.strip()))
+        except ValueError:
+            return f"❌ Can't read '{part}'. Use name=score pairs, e.g. \"English Only - Avoid=-10000,Chromecast Optimal=50\"."
+    if not wanted:
+        return "Provide at least one name=score pair."
+    profile = req(f"/qualityprofile/{profile_id}")
+    if isinstance(profile, str):
+        return profile
+    by_name = {f.get("name", "").lower(): f for f in profile.get("formatItems", [])}
+    unknown = [orig for key, (orig, _) in wanted.items() if key not in by_name]
+    if unknown:
+        known = ", ".join(sorted(f.get("name", "?") for f in profile.get("formatItems", []))) or "none"
+        return f"❌ Unknown custom format(s): {', '.join(unknown)}. This profile has: {known}"
+    changes = []
+    for key, (_, score) in wanted.items():
+        item = by_name[key]
+        if item.get("score", 0) != score:
+            changes.append(f"  {item.get('name')}: {item.get('score', 0):+d}  →  {score:+d}")
+            item["score"] = score
+    if not changes:
+        return "All scores already have those values; nothing changed."
+    result = req(f"/qualityprofile/{profile_id}", method="PUT", json=profile)
+    if isinstance(result, str):
+        return f"❌ Failed to update scores: {result}"
+    saved = result if isinstance(result, dict) and result.get("formatItems") else profile
+    return (f"✅ Updated custom format scores on '{profile.get('name', profile_id)}':\n" + "\n".join(changes)
+            + f"\nBest possible total is now {_best_format_score(saved)}." + _score_warning(saved))
+
+
 def _apply_quality_allowlist(items, allow_lower: set, disallow_lower: set):
     """Toggle 'allowed' on quality profile items matching the given
     (lowercased) names. Radarr/Sonarr quality profiles nest grouped
@@ -1193,6 +1341,61 @@ def sonarr_list_custom_formats() -> str:
             f"  Specs: {', '.join(specs) or 'none'}"
         )
     return "\n".join(lines)
+
+
+@mcp.tool()
+def sonarr_get_quality_profile(profile_id: int) -> str:
+    """Show one Sonarr quality profile in full: qualities in preference order
+    (allowed or not), the cutoff, whether upgrades are allowed, the custom format
+    score thresholds, and the score each custom format gets in this profile.
+
+    Args:
+        profile_id: Quality profile ID (use sonarr_list_quality_profiles).
+    """
+    return _get_quality_profile(_sonarr, profile_id)
+
+
+@mcp.tool()
+def sonarr_update_quality_profile(
+    profile_id: int,
+    cutoff: str = "",
+    upgrade_allowed: int = -1,
+    min_format_score: int | None = None,
+    cutoff_format_score: int | None = None,
+    min_upgrade_format_score: int | None = None,
+) -> str:
+    """Change a Sonarr quality profile's upgrade settings. Only the settings you
+    pass are changed; the reply shows each value before and after. Affects every
+    item using the profile. Use sonarr_get_quality_profile first.
+
+    Args:
+        profile_id: Quality profile ID (use sonarr_list_quality_profiles).
+        cutoff: Quality or group name to stop upgrading at, e.g. "Bluray-1080p" or
+            "WEB 1080p". Must be allowed in the profile. Empty keeps the current cutoff.
+        upgrade_allowed: 1 to allow upgrades, 0 to stop them, -1 to keep.
+        min_format_score: Releases scoring below this are rejected. Omit to keep.
+        cutoff_format_score: Keep upgrading until a file reaches this score. Omit to keep.
+        min_upgrade_format_score: How much better a release's score must be to count
+            as an upgrade (1 or more). Omit to keep.
+    """
+    return _update_quality_profile(_sonarr, profile_id, cutoff, upgrade_allowed, min_format_score,
+                                   cutoff_format_score, min_upgrade_format_score)
+
+
+@mcp.tool()
+def sonarr_set_custom_format_scores(profile_id: int, scores: str) -> str:
+    """Set how many points custom formats are worth in a Sonarr quality profile.
+    Positive scores make matching releases preferred, negative scores avoided;
+    a large negative score (e.g. -10000) together with a minimum score of 0 or
+    more effectively bans them. The reply shows each score before and after and
+    warns if the profile would reject every release.
+
+    Args:
+        profile_id: Quality profile ID (use sonarr_list_quality_profiles).
+        scores: Comma-separated name=score pairs; names as in sonarr_get_quality_profile
+            (case-insensitive), e.g. "English Only - Avoid=-10000,Chromecast Optimal=50".
+    """
+    return _set_custom_format_scores(_sonarr, profile_id, scores)
 
 
 @mcp.tool()
@@ -1917,6 +2120,61 @@ def radarr_list_custom_formats() -> str:
             f"  Specs: {', '.join(specs) or 'none'}"
         )
     return "\n".join(lines)
+
+
+@mcp.tool()
+def radarr_get_quality_profile(profile_id: int) -> str:
+    """Show one Radarr quality profile in full: qualities in preference order
+    (allowed or not), the cutoff, whether upgrades are allowed, the custom format
+    score thresholds, and the score each custom format gets in this profile.
+
+    Args:
+        profile_id: Quality profile ID (use radarr_list_quality_profiles).
+    """
+    return _get_quality_profile(_radarr, profile_id)
+
+
+@mcp.tool()
+def radarr_update_quality_profile(
+    profile_id: int,
+    cutoff: str = "",
+    upgrade_allowed: int = -1,
+    min_format_score: int | None = None,
+    cutoff_format_score: int | None = None,
+    min_upgrade_format_score: int | None = None,
+) -> str:
+    """Change a Radarr quality profile's upgrade settings. Only the settings you
+    pass are changed; the reply shows each value before and after. Affects every
+    item using the profile. Use radarr_get_quality_profile first.
+
+    Args:
+        profile_id: Quality profile ID (use radarr_list_quality_profiles).
+        cutoff: Quality or group name to stop upgrading at, e.g. "Bluray-1080p" or
+            "WEB 1080p". Must be allowed in the profile. Empty keeps the current cutoff.
+        upgrade_allowed: 1 to allow upgrades, 0 to stop them, -1 to keep.
+        min_format_score: Releases scoring below this are rejected. Omit to keep.
+        cutoff_format_score: Keep upgrading until a file reaches this score. Omit to keep.
+        min_upgrade_format_score: How much better a release's score must be to count
+            as an upgrade (1 or more). Omit to keep.
+    """
+    return _update_quality_profile(_radarr, profile_id, cutoff, upgrade_allowed, min_format_score,
+                                   cutoff_format_score, min_upgrade_format_score)
+
+
+@mcp.tool()
+def radarr_set_custom_format_scores(profile_id: int, scores: str) -> str:
+    """Set how many points custom formats are worth in a Radarr quality profile.
+    Positive scores make matching releases preferred, negative scores avoided;
+    a large negative score (e.g. -10000) together with a minimum score of 0 or
+    more effectively bans them. The reply shows each score before and after and
+    warns if the profile would reject every release.
+
+    Args:
+        profile_id: Quality profile ID (use radarr_list_quality_profiles).
+        scores: Comma-separated name=score pairs; names as in radarr_get_quality_profile
+            (case-insensitive), e.g. "English Only - Avoid=-10000,Chromecast Optimal=50".
+    """
+    return _set_custom_format_scores(_radarr, profile_id, scores)
 
 
 @mcp.tool()
