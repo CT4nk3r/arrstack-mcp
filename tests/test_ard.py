@@ -225,6 +225,45 @@ class ExampleArtifactTests(unittest.TestCase):
         catalog = json.loads(path.read_text())
         self.assertEqual(ard.validate_catalog(catalog), [])
 
+    def test_committed_example_lists_every_advertised_tool(self):
+        """examples/ai-catalog.json is sample output; keep it in step with the code.
+
+        Regenerate it when tools are added or renamed:
+
+            ENABLED_SERVICES=all ARD_DOMAIN=arrstack.example.com \
+              ARD_PUBLIC_URL=https://arrstack.example.com ARD_HOST_NAME="My Homelab" \
+              ARD_DID_WEB=arrstack.example.com ARD_EMBED_CARD=false \
+              python server.py --print-catalog > examples/ai-catalog.json
+        """
+        env = os.environ.copy()
+        env["ENABLED_SERVICES"] = "all"
+        env["ALLOW_DESTRUCTIVE"] = "true"
+        code = (
+            "from arrstack_mcp import server;"
+            "server._configure_service_tools();"
+            "print(','.join(t.name for t in server.mcp._tool_manager.list_tools()))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        advertised = set(result.stdout.strip().split(","))
+        catalog = json.loads((REPO_ROOT / "examples" / "ai-catalog.json").read_text())
+        listed = set(catalog["entries"][0]["capabilities"])
+        self.assertEqual(
+            sorted(listed - advertised),
+            [],
+            "example catalog lists tools the server no longer advertises",
+        )
+        self.assertEqual(
+            sorted(advertised - listed),
+            [],
+            "example catalog is missing advertised tools",
+        )
+
 
 class WellKnownRouteTests(unittest.TestCase):
     """Exercise the live /.well-known routes through the real HTTP app."""
