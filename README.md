@@ -357,7 +357,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
 | `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
-| `sonarr_delete_series` | Remove a series, optionally deleting files and adding an import list exclusion |
+| `sonarr_delete_series` | Remove a series, keeping its files unless `delete_files=True`; optional import list exclusion |
 | `sonarr_search_missing` | Search missing episodes for one series or all |
 | `sonarr_update_series` | Change a series' quality profile or monitored status |
 | `sonarr_list_quality_profiles` | List quality profiles |
@@ -380,7 +380,7 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `radarr_queue` | Show current download queue |
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
-| `radarr_delete_movie` | Remove a movie, optionally deleting files and adding an import exclusion |
+| `radarr_delete_movie` | Remove a movie, keeping its files unless `delete_files=True`; optional import exclusion |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
 | `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
 | `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
@@ -504,8 +504,8 @@ Sonarr/Radarr.
 | Tool | Description |
 |------|-------------|
 | `seerr_search` | Search movies and TV shows, returns TMDB IDs |
-| `seerr_request_movie` | Request a movie by TMDB ID, with a quality profile name (default `1080p`) |
-| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection and quality profile name (default `1080p`) |
+| `seerr_request_movie` | Request a movie by TMDB ID, with an optional quality profile name (default: Seerr's own) |
+| `seerr_request_tv` | Request a TV show by TMDB ID, with optional season selection and quality profile name (default: Seerr's own) |
 | `seerr_list_requests` | List requests, filterable by status |
 | `seerr_delete_request` | Delete a request |
 | `seerr_request_status` | Get the status of a specific request |

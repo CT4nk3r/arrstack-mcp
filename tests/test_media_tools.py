@@ -47,17 +47,17 @@ class ArrDeleteTests(unittest.TestCase):
         radarr.assert_called_once_with(
             "/movie/7",
             method="DELETE",
-            params={"deleteFiles": "true", "addImportExclusion": "false"},
+            params={"deleteFiles": "false", "addImportExclusion": "false"},
         )
         self.assertTrue(out.startswith("✅"))
 
     @patch("arrstack_mcp.server._radarr")
     def test_radarr_delete_movie_flags(self, radarr):
         radarr.return_value = {}
-        server.radarr_delete_movie(7, delete_files=False, add_import_exclusion=True)
+        server.radarr_delete_movie(7, delete_files=True, add_import_exclusion=True)
         self.assertEqual(
             radarr.call_args.kwargs["params"],
-            {"deleteFiles": "false", "addImportExclusion": "true"},
+            {"deleteFiles": "true", "addImportExclusion": "true"},
         )
 
     @patch("arrstack_mcp.server._radarr")
@@ -77,17 +77,17 @@ class ArrDeleteTests(unittest.TestCase):
         sonarr.assert_called_once_with(
             "/series/3",
             method="DELETE",
-            params={"deleteFiles": "true", "addImportListExclusion": "false"},
+            params={"deleteFiles": "false", "addImportListExclusion": "false"},
         )
         self.assertTrue(out.startswith("✅"))
 
     @patch("arrstack_mcp.server._sonarr")
     def test_sonarr_delete_series_flags(self, sonarr):
         sonarr.return_value = {}
-        server.sonarr_delete_series(3, delete_files=False, add_import_list_exclusion=True)
+        server.sonarr_delete_series(3, delete_files=True, add_import_list_exclusion=True)
         self.assertEqual(
             sonarr.call_args.kwargs["params"],
-            {"deleteFiles": "false", "addImportListExclusion": "true"},
+            {"deleteFiles": "true", "addImportListExclusion": "true"},
         )
 
     @patch("arrstack_mcp.server._sonarr")
@@ -153,18 +153,14 @@ class SeerrDeleteRequestTests(unittest.TestCase):
 
 class SeerrQualityTests(unittest.TestCase):
     @patch("arrstack_mcp.server._seerr")
-    def test_movie_default_quality_resolves_profile(self, seerr):
-        seerr.side_effect = seerr_router("radarr", detail={
-            "profiles": [{"id": 9, "name": "SD"}, {"id": 4, "name": "1080p"}],
-        })
+    def test_movie_default_quality_lets_seerr_choose(self, seerr):
+        seerr.return_value = {"id": 55, "status": 1}
         out = server.seerr_request_movie(603)
-        paths = [c.args[0] for c in seerr.call_args_list]
-        self.assertEqual(paths, ["/service/radarr", "/service/radarr/2", "/request"])
-        self.assertEqual(
-            seerr.call_args_list[-1].kwargs["json"],
-            {"mediaType": "movie", "mediaId": 603, "serverId": 2, "profileId": 4},
+        seerr.assert_called_once_with(
+            "/request", method="POST", json={"mediaType": "movie", "mediaId": 603}
         )
         self.assertTrue(out.startswith("✅"))
+        self.assertIn("Seerr default", out)
 
     @patch("arrstack_mcp.server._seerr")
     def test_movie_quality_match_is_case_insensitive(self, seerr):
@@ -184,18 +180,39 @@ class SeerrQualityTests(unittest.TestCase):
         self.assertNotIn("/request", [c.args[0] for c in seerr.call_args_list if c.kwargs.get("method") == "POST"])
 
     @patch("arrstack_mcp.server._seerr")
-    def test_movie_no_default_non_4k_server(self, seerr):
-        servers = [SERVERS[0], SERVERS[2]]
-        seerr.side_effect = seerr_router("radarr", servers=servers)
-        out = server.seerr_request_movie(603)
+    def test_movie_4k_only_setup_uses_the_4k_server(self, seerr):
+        seerr.side_effect = seerr_router("radarr", servers=[
+            {"id": 1, "name": "Radarr 4K", "isDefault": True, "is4k": True},
+        ])
+        out = server.seerr_request_movie(603, quality="HD-1080p")
+        paths = [c.args[0] for c in seerr.call_args_list]
+        self.assertEqual(paths, ["/service/radarr", "/service/radarr/1", "/request"])
+        body = seerr.call_args_list[-1].kwargs["json"]
+        self.assertEqual((body["serverId"], body["profileId"]), (1, 4))
+        self.assertTrue(out.startswith("✅"))
+
+    @patch("arrstack_mcp.server._seerr")
+    def test_movie_without_any_default_server_reports_error(self, seerr):
+        seerr.side_effect = seerr_router("radarr", servers=[])
+        out = server.seerr_request_movie(603, quality="HD-1080p")
         self.assertTrue(out.startswith("❌"))
-        self.assertIn("default non-4K", out)
+        self.assertIn("no default radarr server", out)
         self.assertEqual(seerr.call_count, 1)
 
     @patch("arrstack_mcp.server._seerr")
     def test_movie_service_lookup_error_is_returned(self, seerr):
         seerr.return_value = "seerr request failed: HTTP 500"
         self.assertEqual(server.seerr_request_movie(603), "seerr request failed: HTTP 500")
+
+    @patch("arrstack_mcp.server._seerr")
+    def test_tv_default_quality_lets_seerr_choose(self, seerr):
+        seerr.return_value = {"id": 55, "status": 1}
+        server.seerr_request_tv(1399, seasons="1,2")
+        seerr.assert_called_once_with(
+            "/request",
+            method="POST",
+            json={"mediaType": "tv", "mediaId": 1399, "seasons": [1, 2]},
+        )
 
     @patch("arrstack_mcp.server._seerr")
     def test_tv_resolves_profile_through_sonarr(self, seerr):
