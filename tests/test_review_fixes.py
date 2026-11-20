@@ -68,16 +68,16 @@ class JsonHandlingTests(ConfiguredServices):
 
 class QbtActionTests(ConfiguredServices):
     @patch("arrstack_mcp.server._qbt")
-    def test_delete_reports_failure(self, qbt):
+    def test_remove_and_files_reports_failure(self, qbt):
         qbt.return_value = "qBittorrent auth failure: 403 after retry."
-        out = server.qbt_delete("abc", delete_files=True)
+        out = server.qbt_remove_torrent_and_files("abc")
         self.assertTrue(out.startswith("❌"))
         self.assertIn("403", out)
 
     @patch("arrstack_mcp.server._qbt")
-    def test_delete_success_on_empty_body(self, qbt):
+    def test_remove_success_on_empty_body(self, qbt):
         qbt.return_value = ""
-        self.assertEqual(server.qbt_delete("abc"), "🗑️ Deleted. (files kept)")
+        self.assertEqual(server.qbt_remove_torrent("abc"), "🗑️ Removed. (files kept)")
 
     @patch("arrstack_mcp.server._qbt")
     def test_pause_falls_back_to_v4_endpoint(self, qbt):
@@ -93,7 +93,7 @@ class QbtActionTests(ConfiguredServices):
         self.assertEqual(qbt.call_count, 1)
 
     def test_empty_hash_is_rejected(self):
-        self.assertTrue(server.qbt_delete("  ").startswith("❌"))
+        self.assertTrue(server.qbt_remove_torrent("  ").startswith("❌"))
 
 
 class RdtActionTests(ConfiguredServices):
