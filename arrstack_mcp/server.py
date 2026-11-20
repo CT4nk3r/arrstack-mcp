@@ -1207,13 +1207,14 @@ def sonarr_delete_episode_file(episode_file_id: int) -> str:
 
 @mcp.tool()
 def sonarr_delete_series(
-    series_id: int, delete_files: bool = True, add_import_list_exclusion: bool = False
+    series_id: int, delete_files: bool = False, add_import_list_exclusion: bool = False
 ) -> str:
     """Remove a series from Sonarr, optionally deleting its files and blocking re-import.
 
     Args:
         series_id: Sonarr series ID (use sonarr_list_series to find it).
-        delete_files: If True, also delete the series' files from disk.
+        delete_files: If True, also delete the series' files from disk. Defaults
+            to False, which removes the series from Sonarr but keeps the files.
         add_import_list_exclusion: If True, add the series to the import list exclusions so lists won't re-add it.
     """
     if series_id <= 0:
@@ -1686,13 +1687,14 @@ def radarr_delete_movie_file(movie_id: int) -> str:
 
 @mcp.tool()
 def radarr_delete_movie(
-    movie_id: int, delete_files: bool = True, add_import_exclusion: bool = False
+    movie_id: int, delete_files: bool = False, add_import_exclusion: bool = False
 ) -> str:
     """Remove a movie from Radarr, optionally deleting its files and blocking re-import.
 
     Args:
         movie_id: Radarr movie ID (use radarr_list_movies or radarr_get_movie to find it).
-        delete_files: If True, also delete the movie's files from disk.
+        delete_files: If True, also delete the movie's files from disk. Defaults
+            to False, which removes the movie from Radarr but keeps the files.
         add_import_exclusion: If True, add the movie to the import exclusion list so lists won't re-add it.
     """
     if movie_id <= 0:
@@ -3354,8 +3356,10 @@ def seerr_search(term: str) -> str:
 
 
 def _seerr_resolve_profile(kind: str, quality: str):
-    """Map a quality profile name to (serverId, profileId) via Seerr's default non-4K server.
+    """Map a quality profile name to (serverId, profileId) via Seerr's default server.
 
+    Prefers the default non-4K server, then falls back to the default 4K one, so
+    a setup whose only Radarr/Sonarr is 4K still resolves a profile name.
     Returns an error string when the lookup fails or the name is unknown.
     """
     servers = _seerr(f"/service/{kind}")
@@ -3363,55 +3367,65 @@ def _seerr_resolve_profile(kind: str, quality: str):
         return servers
     chosen = next((s for s in servers if s.get("isDefault") and not s.get("is4k")), None)
     if chosen is None:
-        return f"❌ Seerr has no default non-4K {kind} server configured."
-    detail = _seerr(f"/service/{kind}/{chosen['id']}")
+        chosen = next((s for s in servers if s.get("isDefault")), None)
+    if chosen is None:
+        return f"❌ Seerr has no default {kind} server configured."
+    server_id = chosen.get("id")
+    if server_id is None:
+        return f"❌ Seerr returned a {kind} server without an id."
+    detail = _seerr(f"/service/{kind}/{server_id}")
     if isinstance(detail, str):
         return detail
     profiles = detail.get("profiles") or []
     wanted = quality.strip().lower()
     for profile in profiles:
+        if profile.get("id") is None:
+            continue
         if str(profile.get("name", "")).lower() == wanted:
-            return chosen["id"], profile["id"]
+            return server_id, profile["id"]
     valid = ", ".join(str(p.get("name", "?")) for p in profiles) or "none"
     return f"❌ Unknown quality '{quality}'. Valid quality profiles: {valid}"
 
 
 @mcp.tool()
-def seerr_request_movie(tmdb_id: int, quality: str = "1080p") -> str:
+def seerr_request_movie(tmdb_id: int, quality: str = "") -> str:
     """Request a movie in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
 
     Args:
         tmdb_id: The TMDB ID of the movie.
-        quality: Name of a Radarr quality profile on Seerr's default non-4K server
-            (case-insensitive). An unknown name returns the valid names.
+        quality: Name of a Radarr quality profile (case-insensitive). An unknown
+            name returns the valid names. Leave empty (default) to let Seerr use
+            the quality profile configured on its default server.
     """
     if tmdb_id <= 0:
         return "Invalid tmdb_id."
-    resolved = _seerr_resolve_profile("radarr", quality)
-    if isinstance(resolved, str):
-        return resolved
-    server_id, profile_id = resolved
-    data = _seerr(
-        "/request",
-        method="POST",
-        json={"mediaType": "movie", "mediaId": tmdb_id, "serverId": server_id, "profileId": profile_id},
-    )
+    body = {"mediaType": "movie", "mediaId": tmdb_id}
+    if quality.strip():
+        resolved = _seerr_resolve_profile("radarr", quality)
+        if isinstance(resolved, str):
+            return resolved
+        body["serverId"], body["profileId"] = resolved
+    data = _seerr("/request", method="POST", json=body)
     if isinstance(data, str):
         return data
     status = data.get("status", "?")
-    return f"✅ Requested movie (tmdbId: {tmdb_id}, quality: {quality}). Request id: {data.get('id', '?')}, status: {status}."
+    return (
+        f"✅ Requested movie (tmdbId: {tmdb_id}, quality: {quality.strip() or 'Seerr default'}). "
+        f"Request id: {data.get('id', '?')}, status: {status}."
+    )
 
 
 @mcp.tool()
-def seerr_request_tv(tmdb_id: int, seasons: str = "all", quality: str = "1080p") -> str:
+def seerr_request_tv(tmdb_id: int, seasons: str = "all", quality: str = "") -> str:
     """Request a TV show in Seerr by its TMDB ID. Use seerr_search to find the TMDB ID first.
 
     Args:
         tmdb_id: The TMDB ID of the show.
         seasons: "all" for every season, or a comma-separated list of season
             numbers (e.g. "1,2,3").
-        quality: Name of a Sonarr quality profile on Seerr's default non-4K server
-            (case-insensitive). An unknown name returns the valid names.
+        quality: Name of a Sonarr quality profile (case-insensitive). An unknown
+            name returns the valid names. Leave empty (default) to let Seerr use
+            the quality profile configured on its default server.
     """
     if tmdb_id <= 0:
         return "Invalid tmdb_id."
@@ -3424,25 +3438,21 @@ def seerr_request_tv(tmdb_id: int, seasons: str = "all", quality: str = "1080p")
             return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
         if not season_payload:
             return "Invalid seasons. Use \"all\" or a comma-separated list like \"1,2,3\"."
-    resolved = _seerr_resolve_profile("sonarr", quality)
-    if isinstance(resolved, str):
-        return resolved
-    server_id, profile_id = resolved
-    data = _seerr(
-        "/request",
-        method="POST",
-        json={
-            "mediaType": "tv",
-            "mediaId": tmdb_id,
-            "seasons": season_payload,
-            "serverId": server_id,
-            "profileId": profile_id,
-        },
-    )
+    body = {"mediaType": "tv", "mediaId": tmdb_id, "seasons": season_payload}
+    if quality.strip():
+        resolved = _seerr_resolve_profile("sonarr", quality)
+        if isinstance(resolved, str):
+            return resolved
+        body["serverId"], body["profileId"] = resolved
+    data = _seerr("/request", method="POST", json=body)
     if isinstance(data, str):
         return data
     status = data.get("status", "?")
-    return f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}, quality: {quality}). Request id: {data.get('id', '?')}, status: {status}."
+    return (
+        f"✅ Requested TV show (tmdbId: {tmdb_id}, seasons: {seasons}, "
+        f"quality: {quality.strip() or 'Seerr default'}). "
+        f"Request id: {data.get('id', '?')}, status: {status}."
+    )
 
 
 @mcp.tool()
