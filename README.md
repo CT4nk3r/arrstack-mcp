@@ -450,6 +450,11 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `qbt_add_tags` | Add tags to torrents |
 | `qbt_remove_tags` | Remove tags from torrents |
 
+> **Upgrading from 0.1.x:** `qbt_delete` was split into `qbt_remove_torrent` (keeps
+> the files) and `qbt_remove_torrent_and_files` (deletes them), so a client can
+> gate the two actions separately by tool name. Update any allow-list or prompt
+> rule that pins `qbt_delete`.
+
 ### SABnzbd (Usenet Downloads)
 
 | Tool | Description |
