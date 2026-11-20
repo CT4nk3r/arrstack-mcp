@@ -143,7 +143,7 @@ class OptionalServiceTests(unittest.TestCase):
         server.SEERR_URL = "http://seerr:5055"
         request.side_effect = seerr_responses(2, {"id": 1, "status": 2})
 
-        server.seerr_request_movie(27205)
+        server.seerr_request_movie(27205, quality="1080p")
 
         _, kwargs = request.call_args
         self.assertEqual(
@@ -156,7 +156,7 @@ class OptionalServiceTests(unittest.TestCase):
         server.SEERR_URL = "http://seerr:5055"
         request.side_effect = seerr_responses(8, {"id": 1, "status": 2})
 
-        server.seerr_request_tv(1399, seasons="all")
+        server.seerr_request_tv(1399, seasons="all", quality="1080p")
 
         _, kwargs = request.call_args
         self.assertEqual(
@@ -169,7 +169,7 @@ class OptionalServiceTests(unittest.TestCase):
         server.SEERR_URL = "http://seerr:5055"
         request.side_effect = seerr_responses(8, {"id": 1, "status": 2})
 
-        server.seerr_request_tv(1399, seasons="1, 2,3")
+        server.seerr_request_tv(1399, seasons="1, 2,3", quality="1080p")
 
         _, kwargs = request.call_args
         self.assertEqual(
