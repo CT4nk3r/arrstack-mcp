@@ -758,6 +758,12 @@ tools using the configured service credentials.
   logged (some APIs put the key in the query string), and `apikey=`-style
   values plus every configured key/password (6+ characters) are masked as `***`.
 
+## Contributors
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md). Pull requests are merged rather than
+squashed, so contributors keep authorship of their commits, and ported or
+reworked work carries a `Co-Authored-By:` trailer.
+
 ## License
 
 MIT

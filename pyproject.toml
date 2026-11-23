@@ -40,4 +40,4 @@ path = "arrstack_mcp/__init__.py"
 packages = ["arrstack_mcp"]
 
 [tool.hatch.build.targets.sdist]
-include = ["arrstack_mcp", "server.py", "README.md", "LICENSE", ".env.example", "docker-compose.yml"]
+include = ["arrstack_mcp", "server.py", "README.md", "CONTRIBUTORS.md", "LICENSE", ".env.example", "docker-compose.yml"]
