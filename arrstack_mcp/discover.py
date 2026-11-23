@@ -96,11 +96,20 @@ def _looks_seerr(client, base):
     return isinstance(data, dict) and "version" in data and "commitTag" in data
 
 
+def _looks_jellystat(client, base):
+    # Without a token this often 401s; treat that (or a JSON list/dict body) as a hit.
+    response = client.get(f"{base}/stats/getAllUserActivity")
+    if response.status_code in (401, 403):
+        return True
+    data = _json(response)
+    return isinstance(data, (list, dict)) and response.status_code == 200
+
+
 FINGERPRINTS: dict[str, Callable[[httpx.Client, str], bool]] = {
     **{key: _looks_arr for key in _ARR_BASED},
     "qbittorrent": _looks_qbt, "rdtclient": _looks_qbt, "sabnzbd": _looks_sab,
-    "jellyfin": _looks_jellyfin, "romm": _looks_romm, "gamevault": _looks_gamevault,
-    "seerr": _looks_seerr,
+    "jellyfin": _looks_jellyfin, "jellystat": _looks_jellystat, "romm": _looks_romm,
+    "gamevault": _looks_gamevault, "seerr": _looks_seerr,
 }
 
 

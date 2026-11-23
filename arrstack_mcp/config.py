@@ -202,6 +202,15 @@ SERVICES: dict[str, Service] = {
             group="Media server",
         ),
         Service(
+            "jellystat", "Jellystat", "Jellyfin watch statistics", "jellystat_",
+            (
+                _url("JELLYSTAT_URL", "Jellystat", 3000),
+                _api_key("JELLYSTAT_API_KEY", "Jellystat", "Settings → API", need="required"),
+            ),
+            3000, ("jellystat",), "Settings → API → API Key",
+            group="Media server",
+        ),
+        Service(
             "romm", "RomM", "ROM Library", "romm_",
             (
                 _url("ROMM_URL", "RomM", 8081),

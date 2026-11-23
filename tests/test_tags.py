@@ -212,8 +212,127 @@ class SonarrTagWiringTests(unittest.TestCase):
         self.assertNotIn("Untagged", result)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class RadarrUpdateMovieTagsTests(unittest.TestCase):
+    def setUp(self):
+        self.radarr_url = server.RADARR_URL
+
+    def tearDown(self):
+        server.RADARR_URL = self.radarr_url
+
+    def test_invalid_movie_id_rejected(self):
+        self.assertEqual(server.radarr_update_movie(0, tags="x"), "Invalid movie_id.")
+
+    def test_invalid_tags_mode_rejected(self):
+        result = server.radarr_update_movie(1, tags="x", tags_mode="bogus")
+        self.assertIn("Invalid tags_mode", result)
+
+    def test_no_changes_specified(self):
+        server.RADARR_URL = "http://radarr:7878"
+        with patch("arrstack_mcp.server.httpx.request") as request:
+            request.return_value = response({"id": 5, "title": "Movie", "tags": []})
+            result = server.radarr_update_movie(5)
+        self.assertEqual(result, "No changes specified.")
+
+    @patch("arrstack_mcp.server.httpx.request")
+    def test_tags_add_mode_unions_and_reports(self, request):
+        server.RADARR_URL = "http://radarr:7878"
+        movie = {"id": 5, "title": "Movie", "tags": [2]}
+        request.side_effect = [
+            response(movie),  # GET movie
+            response(ALL_TAGS),  # GET /tag
+            response({**movie, "tags": [2, 3]}),  # PUT movie
+        ]
+
+        result = server.radarr_update_movie(5, tags="3 - laura", tags_mode="add")
+
+        put_call = request.call_args_list[-1]
+        self.assertEqual(put_call.kwargs["json"]["tags"], [2, 3])
+        self.assertIn("tags (add: 3 - laura) → [2, 3]", result)
+
+    @patch("arrstack_mcp.server.httpx.request")
+    def test_tags_set_mode_replaces(self, request):
+        server.RADARR_URL = "http://radarr:7878"
+        movie = {"id": 5, "title": "Movie", "tags": [2, 3]}
+        request.side_effect = [
+            response(movie),
+            response(ALL_TAGS),
+            response({**movie, "tags": [3]}),
+        ]
+
+        server.radarr_update_movie(5, tags="3 - laura", tags_mode="set")
+
+        put_call = request.call_args_list[-1]
+        self.assertEqual(put_call.kwargs["json"]["tags"], [3])
+
+    @patch("arrstack_mcp.server.httpx.request")
+    def test_tags_create_missing_tag(self, request):
+        server.RADARR_URL = "http://radarr:7878"
+        movie = {"id": 5, "title": "Movie", "tags": []}
+        request.side_effect = [
+            response(movie),  # GET movie
+            response([]),  # GET /tag — nothing exists yet
+            response({"id": 10, "label": "rewatch"}),  # POST /tag — create it
+            response({**movie, "tags": [10]}),  # PUT movie
+        ]
+
+        result = server.radarr_update_movie(5, tags="rewatch")
+
+        create_call = request.call_args_list[2]
+        self.assertEqual(create_call.kwargs.get("method") or create_call.args[0], "POST")
+        self.assertEqual(create_call.kwargs["json"], {"label": "rewatch"})
+        self.assertIn("tags (add: rewatch) → [10]", result)
+
+    @patch("arrstack_mcp.server.httpx.request")
+    def test_combines_tags_with_other_fields_in_one_put(self, request):
+        server.RADARR_URL = "http://radarr:7878"
+        movie = {"id": 5, "title": "Movie", "tags": [], "monitored": False, "qualityProfileId": 1}
+        request.side_effect = [
+            response(movie),
+            response(ALL_TAGS),
+            response({**movie, "tags": [2], "monitored": True, "qualityProfileId": 4}),
+        ]
+
+        result = server.radarr_update_movie(5, quality_profile_id=4, monitored=1, tags="2 - bryan")
+
+        put_call = request.call_args_list[-1]
+        self.assertEqual(put_call.kwargs["json"]["tags"], [2])
+        self.assertEqual(put_call.kwargs["json"]["qualityProfileId"], 4)
+        self.assertEqual(put_call.kwargs["json"]["monitored"], True)
+        self.assertIn("qualityProfile → 4", result)
+        self.assertIn("monitored → True", result)
+        self.assertIn("tags (add: 2 - bryan)", result)
+        self.assertEqual(request.call_count, 3)  # GET movie, GET tag, PUT — no extra calls
+
+
+
+class SonarrUpdateSeriesTagsTests(unittest.TestCase):
+    """Mirrors Radarr's implementation exactly — light wiring check only."""
+
+    def setUp(self):
+        self.sonarr_url = server.SONARR_URL
+
+    def tearDown(self):
+        server.SONARR_URL = self.sonarr_url
+
+    def test_invalid_tags_mode_rejected(self):
+        result = server.sonarr_update_series(1, tags="x", tags_mode="bogus")
+        self.assertIn("Invalid tags_mode", result)
+
+    @patch("arrstack_mcp.server.httpx.request")
+    def test_tags_add_mode_unions_and_reports(self, request):
+        server.SONARR_URL = "http://sonarr:8989"
+        series = {"id": 7, "title": "Show", "tags": [2]}
+        request.side_effect = [
+            response(series),
+            response(ALL_TAGS),
+            response({**series, "tags": [2, 3]}),
+        ]
+
+        result = server.sonarr_update_series(7, tags="3 - laura", tags_mode="add")
+
+        put_call = request.call_args_list[-1]
+        self.assertEqual(put_call.kwargs["json"]["tags"], [2, 3])
+        self.assertIn("tags (add: 3 - laura) → [2, 3]", result)
 
 
 class TagLabelLookupTests(unittest.TestCase):
@@ -224,3 +343,7 @@ class TagLabelLookupTests(unittest.TestCase):
     def test_tag_lookup_maps_ids_to_labels(self):
         data = [{"id": 1, "label": "2 - bryan"}, {"id": 2, "label": "rewatch"}]
         self.assertEqual(server._tag_labels(lambda path: data), {1: "2 - bryan", 2: "rewatch"})
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,7 +2,9 @@
   "mcpServers": {
     "arrstack": {
       "command": "python",
-      "args": ["server.py"],
+      "args": [
+        "server.py"
+      ],
       "env": {
         "ENABLED_SERVICES": "auto",
         "SONARR_URL": "http://localhost:8989",
@@ -31,7 +33,9 @@
         "BOOKSHELF_URL": "http://localhost:8787",
         "BOOKSHELF_API_KEY": "your-api-key",
         "SEERR_URL": "http://localhost:5055",
-        "SEERR_API_KEY": "your-api-key"
+        "SEERR_API_KEY": "your-api-key",
+        "JELLYSTAT_URL": "http://localhost:3000",
+        "JELLYSTAT_API_KEY": "your-api-key"
       }
     }
   }
