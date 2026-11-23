@@ -54,6 +54,7 @@ else.
 | **SABnzbd** | Queue, history, status, pause/resume, add NZB url, speed limit |
 | **RDTClient** | Real-Debrid downloader: list/pause/resume/delete torrents, add magnets, provider status |
 | **Jellyfin** | List libraries, recent additions, system info |
+| **Jellystat** | User watch stats, most-watched, activity history |
 | **RomM** | System info, list platforms, list/search ROMs, game details |
 | **GameVault** | List/search PC games, game details, random game, reindex library |
 | **Bookshelf** | List/search authors & books, queue, missing, profiles, health |
@@ -72,8 +73,8 @@ advertised tool catalog is configurable:
 - Run `python server.py --list-services` to inspect configured/enabled services.
 
 Valid service names are `sonarr`, `radarr`, `lidarr`, `prowlarr`,
-`qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `romm`, `gamevault`,
-`bookshelf`, and `seerr`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
+`qbittorrent`, `rdtclient`, `sabnzbd`, `jellyfin`, `jellystat`, `romm`,
+`gamevault`, `bookshelf`, and `seerr`. Aliases `qbt`, `rdt`, and `sab` are also accepted.
 
 ### Agent behaviour
 
@@ -277,6 +278,8 @@ stop the server at startup with a list of every problem.
 | `SAB_API_KEY` | If SABnzbd | SABnzbd API key (Config → General → API Key) |
 | `JELLYFIN_URL` | No | Jellyfin base URL (e.g. `http://localhost:8096`) |
 | `JELLYFIN_API_KEY` | No | Jellyfin API key (needed for libraries, recent items and library scans) |
+| `JELLYSTAT_URL` | No | Jellystat base URL (e.g. `http://localhost:3000`) |
+| `JELLYSTAT_API_KEY` | If Jellystat | Jellystat API key (Settings → API) |
 | `ROMM_URL` | No | RomM base URL (e.g. `http://localhost:8081`) |
 | `ROMM_API_TOKEN` | If RomM | RomM bearer token; alternatively use `ROMM_USER` and `ROMM_PASS` |
 | `ROMM_USER` | If RomM basic auth | RomM username |
@@ -356,11 +359,15 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 | `sonarr_queue` | Show current download queue |
 | `sonarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
 | `sonarr_list_episode_files` | List downloaded episode files with their file IDs |
-| `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded |
+| `sonarr_delete_episode_file` | Delete an episode file so it can be re-downloaded (`blocklist=true` also blocklists the release it came from) |
 | `sonarr_delete_series` | Remove a series, keeping its files unless `delete_files=True`; optional import list exclusion |
 | `sonarr_search_missing` | Search missing episodes for one series or all |
 | `sonarr_update_series` | Change a series' quality profile or monitored status |
 | `sonarr_list_quality_profiles` | List quality profiles |
+| `sonarr_get_quality_profile` | Show a profile in full: quality order, cutoff, score thresholds, custom format scores |
+| `sonarr_update_quality_profile` | Change a profile's cutoff, upgrades allowed, and custom format score thresholds |
+| `sonarr_set_custom_format_scores` | Set custom format scores in a profile by name |
+| `sonarr_list_cutoff_unmet` | List episodes below their profile's cutoff (what would still be upgraded) |
 | `sonarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
 | `sonarr_set_quality_definition` | Change size limits for a quality tier |
 | `sonarr_list_custom_formats` | List custom formats |
@@ -375,17 +382,22 @@ when an enabled service is broken. Add `--json` for scripts. In Docker:
 |------|-------------|
 | `radarr_list_movies` | List all movies with download status |
 | `radarr_get_movie` | Get detailed info about a specific movie |
+| `radarr_get_movie_file` | Show a movie's file: name, size, quality, codecs, audio/subtitle languages |
 | `radarr_search` | Search for new movies to add |
 | `radarr_add_movie` | Add a movie by TMDB ID |
 | `radarr_queue` | Show current download queue |
 | `radarr_delete_queue_item` | Remove an item from the queue (optionally blocklist) |
-| `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded |
+| `radarr_delete_movie_file` | Delete a movie's file so it can be re-downloaded (`blocklist=true` also blocklists the release it came from) |
 | `radarr_delete_movie` | Remove a movie, keeping its files unless `delete_files=True`; optional import exclusion |
 | `radarr_search_missing` | Search specific movies, or all monitored missing movies |
 | `radarr_releases` | Interactive search: list the releases Radarr finds for a movie (filterable) |
 | `radarr_grab_release` | Grab one of those releases; Radarr downloads and imports it itself |
 | `radarr_update_movie` | Change a movie's quality profile or monitored status |
 | `radarr_list_quality_profiles` | List quality profiles |
+| `radarr_get_quality_profile` | Show a profile in full: quality order, cutoff, score thresholds, custom format scores |
+| `radarr_update_quality_profile` | Change a profile's cutoff, upgrades allowed, and custom format score thresholds |
+| `radarr_set_custom_format_scores` | Set custom format scores in a profile by name |
+| `radarr_list_cutoff_unmet` | List movies below their profile's cutoff (what would still be upgraded) |
 | `radarr_get_quality_definitions` | Show size limits (MB/min) per quality tier |
 | `radarr_set_quality_definition` | Change size limits for a quality tier |
 | `radarr_list_custom_formats` | List custom formats |
@@ -494,6 +506,16 @@ API, so it slots into Sonarr/Radarr just like qBt.
 | `jellyfin_recent` | Recently added items |
 | `jellyfin_system_info` | Server version and system info |
 | `jellyfin_scan_library` | Trigger a library scan (needs `JELLYFIN_API_KEY`) |
+
+### Jellystat (Jellyfin watch statistics)
+
+| Tool | Description |
+|------|-------------|
+| `jellystat_list_users` | List Jellyfin users with a watch-activity summary |
+| `jellystat_user_stats` | Total plays and watch time for one user over a window |
+| `jellystat_most_watched` | Most-watched movies, series or music over a window |
+| `jellystat_most_active_users` | Which users watched the most over a window |
+| `jellystat_user_history` | Recently watched items for one user |
 
 ### Seerr (Media Requests)
 

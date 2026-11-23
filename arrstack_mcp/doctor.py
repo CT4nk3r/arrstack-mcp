@@ -191,6 +191,18 @@ def _probe_gamevault(service, values, client):
     return "", ""
 
 
+def _probe_jellystat(service, values, client):
+    url = values[service.url.env]
+    response = _request(
+        client,
+        "GET",
+        f"{url}/stats/getAllUserActivity",
+        headers={"x-api-token": values["JELLYSTAT_API_KEY"]},
+    )
+    _expect_ok(response, service, f"JELLYSTAT_API_KEY ({service.key_help})")
+    return "", ""
+
+
 def _probe_seerr(service, values, client):
     url = values[service.url.env]
     response = _request(client, "GET", f"{url}/api/v1/status")
@@ -205,7 +217,7 @@ def _probe_seerr(service, values, client):
 PROBES: dict[str, Callable] = {
     "sonarr": _probe_arr, "radarr": _probe_arr, "lidarr": _probe_arr, "prowlarr": _probe_arr,
     "bookshelf": _probe_arr, "qbittorrent": _probe_qbt_like, "rdtclient": _probe_qbt_like,
-    "sabnzbd": _probe_sab, "jellyfin": _probe_jellyfin, "romm": _probe_romm,
+    "sabnzbd": _probe_sab, "jellyfin": _probe_jellyfin, "jellystat": _probe_jellystat, "romm": _probe_romm,
     "gamevault": _probe_gamevault, "seerr": _probe_seerr,
 }
 

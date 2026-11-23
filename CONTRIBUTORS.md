@@ -13,7 +13,7 @@ credited by commit authorship or a `Co-Authored-By:` trailer.
 | **Cody Cook** ([@didyouexpectthat](https://github.com/didyouexpectthat)) | MCP SDK compatibility and the Jellyfin authentication fix (#9); series titles in Sonarr upcoming episodes (#10). |
 | **lechu515** ([@lechu515](https://github.com/lechu515)) | Radarr interactive search (`radarr_releases`, `radarr_grab_release`) and usenet support in `prowlarr_grab`, ported in #15. |
 | **Brian Phelps** ([@BPCP](https://github.com/BPCP)) | Fork contributions, log redaction and guided configuration (#11). |
-| **Bryan Feller** ([@bfeller](https://github.com/bfeller)) | Fork contributions, log redaction and guided configuration (#11). |
+| **Bryan Feller** ([@bfeller](https://github.com/bfeller)) | Fork contributions, log redaction and guided configuration (#11); the Jellystat service and `jellystat_*` tools, Lidarr album add/prepare, Radarr/Sonarr file inspection, history and manual import, quality-profile and custom-format-score editing, cutoff-unmet listing and the cutoff guard, blocklist listing, health and root-folder tools, plus `blocklist=true` on the file deletes and tag support in `radarr_update_movie`. |
 | **Justin Tout** ([@justintout](https://github.com/justintout)) | Optional services and the configurable tool catalog; game-library support and MCP transport hardening. |
 
 ## How credit is recorded

@@ -73,6 +73,7 @@ _SERVICE_QUERIES = {
     "sabnzbd": "pause my usenet download queue",
     "rdtclient": "add a magnet link to my Real-Debrid downloader",
     "jellyfin": "what was recently added to my media server",
+    "jellystat": "who watches the most movies on my Jellyfin server",
     "romm": "list the games in my ROM library",
     "gamevault": "pick a random PC game from my GameVault library",
     "bookshelf": "search for a book to add to my library",
@@ -80,7 +81,7 @@ _SERVICE_QUERIES = {
 }
 _QUERY_PRIORITY = [
     "radarr", "sonarr", "qbittorrent", "romm", "lidarr",
-    "jellyfin", "gamevault", "prowlarr", "sabnzbd", "rdtclient", "bookshelf",
+    "jellyfin", "jellystat", "gamevault", "prowlarr", "sabnzbd", "rdtclient", "bookshelf",
     "seerr",
 ]
 _GENERAL_QUERIES = [
